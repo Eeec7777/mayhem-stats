@@ -52,7 +52,7 @@ export function TimeAnalysis() {
 
   const daily = useCube(
     apply({
-      measures: ["participants.games", "participants.winrate"],
+      measures: ["participants.games", "participants.wins", "participants.winrate"],
       dimensions: ["matches.local_date"],
       limit: NO_LIMIT,
     }),
@@ -83,6 +83,7 @@ export function TimeAnalysis() {
         .map((r) => ({
           date: String(r["matches.local_date"] ?? ""),
           games: num(r["participants.games"]) ?? 0,
+          wins: num(r["participants.wins"]) ?? 0,
           winrate: num(r["participants.winrate"]),
         }))
         .filter((d) => d.date)
@@ -197,7 +198,7 @@ export function TimeAnalysis() {
         )}
       </div>
 
-      <Panel title="每天的場次與勝率" caption="上面是勝率、下面是場次，虛線是你的整體水準。點一天聚焦">
+      <Panel title="每天的場次與勝率" caption="上面是累積勝率（打到那天為止的總勝率），虛線是 50%；下面是每天的場次，分成勝、敗兩段。點一天聚焦">
         {daily.loading ? (
           <Skeleton className="h-[280px] w-full" />
         ) : days.length ? (

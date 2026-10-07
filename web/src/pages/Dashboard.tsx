@@ -94,10 +94,7 @@ type PeriodSummary = { games: number; winrate: number | null }
 function summarizePeriod(points: DayDatum[]): PeriodSummary {
   const games = points.reduce((sum, point) => sum + point.games, 0)
   if (!games) return { games: 0, winrate: null }
-  const wins = points.reduce(
-    (sum, point) => sum + (point.winrate === null ? 0 : (point.winrate / 100) * point.games),
-    0,
-  )
+  const wins = points.reduce((sum, point) => sum + point.wins, 0)
   return { games, winrate: (wins / games) * 100 }
 }
 
@@ -332,7 +329,7 @@ export function Dashboard() {
   // 和時段頁同一個查詢（按採集時存好的本地日期分組），兩頁的每日數字保證一樣，快取也共用
   const daily = useCube(
     apply({
-      measures: ["participants.games", "participants.winrate"],
+      measures: ["participants.games", "participants.wins", "participants.winrate"],
       dimensions: ["matches.local_date"],
       limit: NO_LIMIT,
     }),
@@ -393,6 +390,7 @@ export function Dashboard() {
         .map((r) => ({
           date: String(r["matches.local_date"] ?? ""),
           games: num(r["participants.games"]) ?? 0,
+          wins: num(r["participants.wins"]) ?? 0,
           winrate: num(r["participants.winrate"]),
         }))
         .filter((p) => p.date)
@@ -464,18 +462,18 @@ export function Dashboard() {
         <Panel
           className="xl:col-span-8"
           title="每日勝率趨勢"
-          caption="上面是勝率、下面是場次，虛線是你的整體水準；沒打的日子留白。點一天看那天的每一場"
+          caption="上面是累積勝率（打到那天為止的總勝率），虛線是 50%；下面是每天的場次，分成勝、敗兩段。點一天看那天的每一場"
           action={<SeeAll page="time" label="時段分析" />}
         >
           {daily.loading ? (
-            <Skeleton className="h-[300px] w-full" />
+            <Skeleton className="h-[340px] w-full" />
           ) : points.length < 2 ? (
             <EmptyState>資料還不夠畫趨勢（至少要兩天）。</EmptyState>
           ) : (
             // 和時段頁同一個元件：兩頁的每日圖讀法一致，只有高度為了卡片版面矮一點
             <DailyChart
               days={points}
-              height={300}
+              height={340}
               selected={day}
               onPick={(picked) => setDay((cur) => (cur === picked ? null : picked))}
             />
