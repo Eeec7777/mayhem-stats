@@ -1241,6 +1241,9 @@ const MAX_FILLED_DAYS = 400
 /** 累積勝率的座標範圍只參考累積場次達到這個數字之後的日子 */
 const MIN_CUMULATIVE_GAMES = 10
 
+/** 每日圖裡，下方留給場次長條的高度比例（折線在上、長條在下，共用同一個繪圖區） */
+const BAR_BAND = 0.36
+
 export function fillDays(days: DayDatum[]): DayDatum[] {
   if (days.length < 2) return days
   const start = new Date(`${days[0].date}T00:00:00`)
@@ -1257,13 +1260,14 @@ export function fillDays(days: DayDatum[]): DayDatum[] {
   return out
 }
 
-/** 一天一組：下面的長條是當天的場次，拆成勝／敗兩段；上面的折線是「累積到那天為止」的勝率。
+/** 一天一組：下方的長條是當天的場次，拆成勝／敗兩段；上方的折線是「累積到那天為止」的勝率。
  *
  *  折線畫累積而不是當天，因為一天只打一兩場時，當天勝率只有 0／50／100 三種值，跳來跳去看不出趨勢；
  *  累積勝率才是「我現在整體多強」的走勢，越往右越穩。當天的勝率改由長條的勝敗兩段表達（高度 = 場次，
  *  兩段各占多少 = 當天勝率），tooltip 再寫出精確數字。沒打的日子累積勝率不變，折線平著走過去。
  *
- *  兩個指標量級不同，所以上下分成兩個座標區、共用日期軸，不用雙 y 軸。 */
+ *  兩個指標量級不同，但畫在同一張圖裡（使用者要求不要分上下）：折線用左邊的勝率軸，
+ *  長條用一條隱藏的場次軸壓在圖的下方，兩者上下錯開；場次直接標在每根長條上，不顯示第二組刻度。 */
 export function DailyChart({
   days: played,
   selected,
@@ -1310,9 +1314,15 @@ export function DailyChart({
     const rateMin = Math.max(0, Math.floor((lo - 1) / rateStep) * rateStep)
     const rateMax = Math.min(100, Math.ceil((hi + 1) / rateStep) * rateStep)
 
-    // 場次軸：刻度取 1、2、5、10… 這種整數，最高那根上方留空間放數字
-    const gameStep = [1, 2, 5, 10, 20, 50].find((s) => maxGames / s <= 3) ?? 100
-    const gameMax = Math.ceil((maxGames * 1.15) / gameStep) * gameStep
+    // 折線和長條畫在同一個繪圖區：勝率軸往下多延伸一段（只是留白，刻度文字不顯示），
+    // 長條用另一條隱藏的場次軸壓在那段留白裡，所以兩者上下錯開、不會互相蓋住。
+    // 場次軸不顯示刻度——每根長條上方直接標了場次，讀者不必拿兩條刻度去對。
+    const pad = Math.ceil(((rateMax - rateMin) * BAR_BAND) / (1 - BAR_BAND) / rateStep) * rateStep
+    const axisMin = rateMin - pad
+    const barShare = pad / (rateMax - axisMin)
+    // 最高那根長條連同上方的數字都要落在留白裡：長條頂端約占留白的 78%
+    const gameMax = (maxGames * 1.18) / (barShare * 0.92)
+    const gridTicks = Array.from({ length: Math.round((rateMax - rateMin) / rateStep) + 1 }, (_, i) => rateMin + i * rateStep)
     const showCounts = days.length <= 60
 
     const xAxisBase = {
@@ -1322,7 +1332,7 @@ export function DailyChart({
       axisLine: { lineStyle: { color: alpha(theme.muted, 0.3) } },
     }
     const dimmed = (d: DayDatum) => focusWeekday !== null && weekdayOf(d.date) !== focusWeekday
-    // 被點的那天：兩個座標區各亮一條欄位底色，不改長條本身的勝敗配色
+    // 被點的那天：整欄亮一條底色，不改長條本身的勝敗配色
     const pickedArea = selected
       ? {
           silent: true,
@@ -1334,7 +1344,6 @@ export function DailyChart({
       type: "bar",
       name,
       stack: "games",
-      xAxisIndex: 1,
       yAxisIndex: 1,
       data: days.map((d) => ({
         value: pick(d),
@@ -1350,9 +1359,9 @@ export function DailyChart({
     })
 
     return {
-      axisPointer: { link: [{ xAxisIndex: "all" }], lineStyle: { color: alpha(theme.primary, 0.5) } },
+      axisPointer: { lineStyle: { color: alpha(theme.primary, 0.5) } },
       legend: {
-        data: ["累積勝率", "勝", "敗"],
+        data: ["累積勝率", "當天勝場", "當天敗場"],
         right: 8,
         top: 0,
         icon: "roundRect",
@@ -1362,10 +1371,7 @@ export function DailyChart({
         selectedMode: false,
         textStyle: { color: theme.muted, fontSize: 11 },
       },
-      grid: [
-        { left: 44, right: 16, top: 26, height: "38%" },
-        { left: 44, right: 16, top: "62%", bottom: 30 },
-      ],
+      grid: { left: 44, right: 16, top: 26, bottom: 30 },
       tooltip: {
         trigger: "axis",
         ...baseTooltip(theme),
@@ -1380,42 +1386,29 @@ export function DailyChart({
           return `${d.date}<br/>當天 ${d.games} 場 · ${d.wins} 勝 ${d.games - d.wins} 敗 · ${(d.winrate ?? 0).toFixed(1)}%${total}${tail}`
         },
       },
-      xAxis: [
-        { ...xAxisBase, gridIndex: 0, axisLabel: { show: false } },
-        { ...xAxisBase, gridIndex: 1, axisLabel: axisLabel(theme, { rotate: days.length > 12 ? 45 : 0 }) },
-      ],
+      xAxis: { ...xAxisBase, axisLabel: axisLabel(theme, { rotate: days.length > 12 ? 45 : 0 }) },
       yAxis: [
         {
           type: "value",
-          gridIndex: 0,
           name: "累積勝率",
           nameTextStyle: { color: theme.muted, fontSize: 10, align: "left" },
-          min: rateMin,
+          min: axisMin,
           max: rateMax,
           interval: rateStep,
-          axisLabel: axisLabel(theme, { formatter: "{value}%" }),
-          splitLine: splitLine(theme),
+          // 延伸出去給長條用的那一段不是勝率，不標刻度；格線改由下面的 markLine 只畫在勝率範圍內
+          axisLabel: axisLabel(theme, { formatter: (v: number) => (v >= rateMin ? `${v}%` : "") }),
+          splitLine: { show: false },
         },
-        {
-          type: "value",
-          gridIndex: 1,
-          name: "場次",
-          nameTextStyle: { color: theme.muted, fontSize: 10, align: "left" },
-          min: 0,
-          max: gameMax,
-          interval: gameStep,
-          axisLabel: axisLabel(theme),
-          splitLine: splitLine(theme),
-        },
+        { type: "value", show: false, min: 0, max: gameMax, splitLine: { show: false } },
       ],
       series: [
         {
           type: "line",
           name: "累積勝率",
-          xAxisIndex: 0,
           yAxisIndex: 0,
           data: cumulative.map((c, i) => ({
-            value: c.rate,
+            // 低於座標範圍的（前幾天場次太少的 0%、100%）不畫，免得折線一頭鑽進下面長條的區域
+            value: c.rate !== null && c.rate >= rateMin ? c.rate : null,
             // 只有最新一天標出數字：那就是「目前整體勝率」
             label: {
               show: i === cumulative.length - 1 && c.rate !== null,
@@ -1456,19 +1449,24 @@ export function DailyChart({
             symbol: "none",
             animationDelay: CHART_GROW_MS * 0.7,
             animationDuration: 400,
-            data: [{ yAxis: 50 }],
-            lineStyle: { color: alpha(theme.primary, 0.6), type: "dashed", width: 1 },
+            // 50% 用強調色，其餘是一般格線
+            data: gridTicks.map((t) => ({
+              yAxis: t,
+              lineStyle:
+                t === 50
+                  ? { color: alpha(theme.primary, 0.6), type: "dashed", width: 1 }
+                  : { color: alpha(theme.muted, 0.14), type: [3, 4], width: 1 },
+            })),
             label: { show: false },
           },
           markArea: pickedArea,
         },
-        { ...bar("勝", theme.win, (d) => d.wins), markArea: pickedArea },
-        bar("敗", theme.loss, (d) => d.games - d.wins),
+        bar("當天勝場", theme.win, (d) => d.wins),
+        bar("當天敗場", theme.loss, (d) => d.games - d.wins),
         // 場次數字標在整根長條上方：堆疊長條沒有「總和」的標籤位置，用一個不畫線不畫點的折線系列來放
         {
           type: "line",
           name: "場次合計",
-          xAxisIndex: 1,
           yAxisIndex: 1,
           silent: true,
           // symbol 設成 none 的話標籤也不會畫，所以留一個看不見的點

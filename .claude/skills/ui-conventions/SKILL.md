@@ -48,7 +48,10 @@ description: 這個專案前端的主題與動畫規範。只要動到 web/src �
   （時段頁「點某天」在真實瀏覽器裡一直沒反應就是這個）。
 - 半透明、漸層用 `alpha()`、`fade()`；座標軸用 `axisLabel()`、`splitLine()`；tooltip 用 `baseTooltip()`。
 - 折線要自訂點的填色時，必須指定 `symbol: "circle"`。預設的 `emptyCircle` 會無視 `itemStyle.color` 一律填白。
-- **不准雙 y 軸。** 兩個量級不同的指標，拆成上下兩個 grid 共用 x 軸（見 `DailyChart`）。
+- **不准兩組都顯示刻度的雙 y 軸。** 讀者會去比「長條頂端和折線誰高」，而那個比較沒有意義。
+  兩個量級不同的指標，預設拆成上下兩個 grid 共用 x 軸；使用者要求合成一張時，照 `DailyChart` 的做法：
+  主指標的軸往下多延伸一段留白（那段刻度文字不顯示），次指標用隱藏的軸（`show: false`）壓在那段留白裡，
+  數值直接標在圖形上，不給第二組刻度。
 - AG Grid 的配色在 `AgTable.tsx` 的 `useGridTheme()`，同樣依主題重算，亮色主題用 `colorSchemeLight`。
 
 ### 新增或修改一個主題

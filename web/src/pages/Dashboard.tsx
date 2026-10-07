@@ -462,7 +462,7 @@ export function Dashboard() {
         <Panel
           className="xl:col-span-8"
           title="每日勝率趨勢"
-          caption="上面是累積勝率（打到那天為止的總勝率），虛線是 50%；下面是每天的場次，分成勝、敗兩段。點一天看那天的每一場"
+          caption="折線是累積勝率，虛線是 50%；長條是每天的勝敗場次，上方數字是場次。點一天看那天的每一場"
           action={<SeeAll page="time" label="時段分析" />}
         >
           {daily.loading ? (

@@ -198,7 +198,7 @@ export function TimeAnalysis() {
         )}
       </div>
 
-      <Panel title="每天的場次與勝率" caption="上面是累積勝率（打到那天為止的總勝率），虛線是 50%；下面是每天的場次，分成勝、敗兩段。點一天聚焦">
+      <Panel title="每天的場次與勝率" caption="折線是累積勝率，虛線是 50%；長條是每天的勝敗場次，上方數字是場次。點一天聚焦">
         {daily.loading ? (
           <Skeleton className="h-[280px] w-full" />
         ) : days.length ? (
