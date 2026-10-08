@@ -53,8 +53,8 @@ export async function navTo(page: Page, id: PageId) {
 export const panel = (page: Page, title: string | RegExp): Locator =>
   page.locator('[data-slot="card"]', { has: page.getByText(title, { exact: typeof title === "string" }) }).first()
 
-/** 目前頁面上 AG Grid 的資料列。 */
-export const gridRows = (scope: Page | Locator) => scope.locator(".ag-center-cols-container .ag-row")
+/** 目前頁面上 AG Grid 已畫出來的資料列（AG Grid 36 只畫看得到的列，釘住的欄用 sticky，不再分左右容器）。 */
+export const gridRows = (scope: Page | Locator) => scope.locator(".ag-row")
 
 /** 打開頂部的 Select（Radix）並選一項。 */
 export async function pick(page: Page, trigger: Locator, option: string | RegExp) {
@@ -140,4 +140,113 @@ export async function sweepHover(page: Page, chart: Locator, steps = 8) {
   }
   await page.mouse.move(2, 2)
   return [...seen]
+}
+
+/** 雷達圖某一軸上的頁面座標。frac 是離圓心多遠（1＝外框）。軸 0 在正上方、逆時針（ECharts 預設，見 RadarChart 的 pixelClick）。 */
+export async function radarPoint(chart: Locator, index: number, frac = 0.7): Promise<{ x: number; y: number }> {
+  const box = (await chart.boundingBox())!
+  const geo = await chart.evaluate((el) => {
+    const o = (el.parentElement as ChartHost).__chart!.getOption() as { radar: { center: [number, number]; radius: number; indicator: unknown[] }[] }
+    return { center: o.radar[0].center, radius: o.radar[0].radius, n: o.radar[0].indicator.length }
+  })
+  const a = (index * 2 * Math.PI) / geo.n
+  return { x: box.x + geo.center[0] - Math.sin(a) * geo.radius * frac, y: box.y + geo.center[1] - Math.cos(a) * geo.radius * frac }
+}
+
+/** 表格（AG Grid）的欄位標題。 */
+export const gridHeaders = (scope: Page | Locator) => scope.locator(".ag-header-cell-text")
+
+/** 表格某一欄（依 col-id，例如 "participants.games"）所有已渲染儲存格的文字，依列序由上到下。
+ *  AG Grid 只畫看得到的欄與列（虛擬化），釘在左邊的欄在另一個容器，這裡一併找。 */
+export async function gridColumn(scope: Page | Locator, colId: string): Promise<string[]> {
+  const root = "waitForLoadState" in scope ? scope.locator("body") : scope
+  return root.evaluate((el, id) => {
+    const out: [number, string][] = []
+    el.querySelectorAll(".ag-row").forEach((row) => {
+      const cell = row.querySelector(`[col-id="${CSS.escape(id)}"]`) as HTMLElement | null
+      if (cell) out.push([Number(row.getAttribute("row-index")), cell.innerText.trim()])
+    })
+    return out.sort((a, b) => a[0] - b[0]).map((x) => x[1])
+  }, colId)
+}
+
+/** 讀 CSV 並解析成二維陣列（支援引號與跳脫的雙引號）。 */
+export async function readCsv(path: string): Promise<string[][]> {
+  const { readFileSync } = await import("node:fs")
+  const text = readFileSync(path, "utf-8").replace(/^﻿/, "")
+  const rows: string[][] = []
+  let row: string[] = []
+  let cell = ""
+  let quoted = false
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    if (quoted) {
+      if (ch === '"' && text[i + 1] === '"') (cell += '"'), i++
+      else if (ch === '"') quoted = false
+      else cell += ch
+    } else if (ch === '"') quoted = true
+    else if (ch === ",") (row.push(cell), (cell = ""))
+    else if (ch === "\n" || ch === "\r") {
+      if (ch === "\r" && text[i + 1] === "\n") i++
+      row.push(cell)
+      rows.push(row)
+      row = []
+      cell = ""
+    } else cell += ch
+  }
+  if (cell !== "" || row.length) (row.push(cell), rows.push(row))
+  return rows
+}
+
+// ───────────────────────────────────────────── 橫向長條圖（BarChart）
+
+export type BarInfo = { label: string; value: number }
+
+/** 目前畫面上看得到的長條（超過一頁的長條圖用 dataZoom 只顯示一段），依圖上由上到下排列。 */
+export async function visibleBars(chart: Locator): Promise<BarInfo[]> {
+  return chart.evaluate((el) => {
+    const c = (el.parentElement as ChartHost).__chart as unknown as {
+      getOption(): { yAxis: { data: string[] }[]; series: { data: ({ value: number } | number)[] }[]; dataZoom?: { startValue?: number; endValue?: number }[] }
+    }
+    const o = c.getOption()
+    const labels = o.yAxis[0].data
+    const zoom = o.dataZoom?.[0]
+    const from = zoom?.startValue ?? 0
+    const to = zoom?.endValue ?? labels.length - 1
+    return labels
+      .map((label, i) => ({ label, i, value: Number(typeof o.series[0].data[i] === "object" ? (o.series[0].data[i] as { value: number }).value : o.series[0].data[i]) }))
+      .filter((b) => b.i >= from && b.i <= to)
+      .map(({ label, value }) => ({ label, value }))
+  })
+}
+
+/** 點某一根長條（要有寬度才點得到，所以 value 必須大於 0）。長條圖比較高時外層會捲動，先捲到那一根再點。 */
+export async function clickBar(page: Page, chart: Locator, label: string) {
+  const pos = await chart.evaluate(async (el, label) => {
+    const host = el.parentElement as ChartHost & HTMLElement
+    const c = host.__chart as unknown as {
+      getOption(): { yAxis: { data: string[] }[]; series: { data: ({ value: number } | number)[] }[] }
+      convertToPixel(f: object, v: unknown): number
+    }
+    const o = c.getOption()
+    const i = o.yAxis[0].data.indexOf(label)
+    if (i < 0) throw new Error(`圖上沒有 ${label}`)
+    const d = o.series[0].data[i]
+    const value = Number(typeof d === "object" ? d.value : d)
+    const y = c.convertToPixel({ yAxisIndex: 0 }, label)
+    const x = c.convertToPixel({ xAxisIndex: 0 }, value / 2)
+    const scroller = host.closest(".overflow-y-auto") as HTMLElement | null
+    if (scroller) scroller.scrollTop = Math.max(0, y - scroller.clientHeight / 2)
+    await new Promise((r) => requestAnimationFrame(() => r(null)))
+    return { x, y }
+  }, label)
+  // 目標點若在視窗外（圖在頁面下半部、第一根長條在圖的最底下），把頁面捲到讓它落在視窗中間
+  let box = (await chart.boundingBox())!
+  const vh = page.viewportSize()!.height
+  if (box.y + pos.y < 60 || box.y + pos.y > vh - 60) {
+    await page.evaluate((dy) => window.scrollBy(0, dy), box.y + pos.y - vh / 2)
+    await page.waitForTimeout(100)
+    box = (await chart.boundingBox())!
+  }
+  await page.mouse.click(box.x + pos.x, box.y + pos.y)
 }
