@@ -41,3 +41,7 @@ icon_cache/
 # 公開鏡像的登入 session(只存 token 雜湊)與「這是我」的綁定
 .public_state.db
 .public_state.db-journal
+
+# Playwright 端對端測試的產物
+web/test-results/
+web/playwright-report/
