@@ -18,10 +18,12 @@ const IGNORED_FAILURES = [
  *  2. 頁面有未捕捉的例外、或 API 回 4xx/5xx，測試就失敗——不然「圖表沒畫出來」之類的壞法會被漏掉。
  *  3. 固定主題（霓虹），避免上一輪測試留在 localStorage 的主題影響到這一輪。 */
 export const test = base.extend<Fixtures>({
-  writes: async ({}, use) => {
-    await use([])
+  // Playwright 要求第一個參數用解構；這個 fixture 不依賴別的，所以是空的
+  // oxlint-disable-next-line no-empty-pattern
+  writes: async ({}, provide) => {
+    await provide([])
   },
-  page: async ({ page, writes }, use) => {
+  page: async ({ page, writes }, provide) => {
     const pageErrors: string[] = []
     const failed: string[] = []
     page.on("pageerror", (e) => pageErrors.push(e.message))
@@ -52,7 +54,7 @@ export const test = base.extend<Fixtures>({
       return route.fallback()
     })
 
-    await use(page)
+    await provide(page)
 
     expect(pageErrors, "頁面丟出未捕捉的例外").toEqual([])
     expect(failed, "有 API 請求失敗").toEqual([])

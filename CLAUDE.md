@@ -10,6 +10,14 @@ ARAM: Mayhem 的本機戰績採集與分析工具。FastAPI（`app.py`）+ Cube 
 | 動到 `web/src` 的任何畫面：頁面、元件、圖表、顏色、動畫、主題 | `ui-conventions` |
 | 驗證數字、量效能、重啟服務、截圖 | `verify-change` |
 
+## 測試
+
+- 後端：`uv run python -m unittest discover -s tests`（`tests/`）。
+- 前端與整條路徑：`cd web && npm run test:e2e`（Playwright，`web/e2e/`，約 14 分鐘）。打在已經在跑的服務上、用真實資料，
+  數字一律和 `e2e/oracle.py` 讀 `mayhem.db` 的獨立 SQL 對；寫入類請求（採集、追蹤、綁定）一律攔下，不會動到資料。
+  改了前端要先 `npm run build`，測的是 `web/dist`。標成 `test.fail` 的是已知問題，修好後它會「意外通過」而失敗，到時把 `test.fail` 拿掉。
+  細節見 `web/e2e/README.md`。
+
 ## 不能違反的規則
 
 - **顏色只用主題 token**（`bg-card`、`text-win`、CSS 變數），不寫死色碼；圖表只透過 `charts.tsx` 的 `useTheme()` 取色。

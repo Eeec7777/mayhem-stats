@@ -103,6 +103,7 @@ test.describe("陣容頁：對陣矩陣", () => {
 
   test("陣容類型面向：沒出現過的類型整列整欄省略，列標題格式「N 前排・混合」", async ({ page }) => {
     await facetRadio(page, "陣容類型").click()
+    await expect(matrix(page).locator("tbody th").nth(2)).toBeVisible()
     const labels = await matrix(page).locator("tbody th").allInnerTexts()
     expect(labels.length).toBeGreaterThan(2)
     expect(labels.length).toBeLessThanOrEqual(13) // 12 種 + 合計列

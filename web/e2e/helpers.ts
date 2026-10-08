@@ -26,7 +26,10 @@ export async function ready(page: Page) {
     .poll(
       () =>
         page.evaluate(() =>
-          [...document.querySelectorAll("div[_echarts_instance_]")].every((el) => (el as HTMLElement).offsetWidth > 0 && el.querySelector("canvas")),
+          // __chart 是 onChartReady 才掛上去的，比 canvas 出現晚一點；測試要讀 option 時它必須已經在
+          [...document.querySelectorAll("div[_echarts_instance_]")].every(
+            (el) => (el as HTMLElement).offsetWidth > 0 && el.querySelector("canvas") && (el.parentElement as { __chart?: unknown } | null)?.__chart,
+          ),
         ),
       { message: "圖表沒有畫出 canvas" },
     )
@@ -181,20 +184,33 @@ export async function readCsv(path: string): Promise<string[][]> {
   for (let i = 0; i < text.length; i++) {
     const ch = text[i]
     if (quoted) {
-      if (ch === '"' && text[i + 1] === '"') (cell += '"'), i++
-      else if (ch === '"') quoted = false
-      else cell += ch
-    } else if (ch === '"') quoted = true
-    else if (ch === ",") (row.push(cell), (cell = ""))
-    else if (ch === "\n" || ch === "\r") {
+      if (ch === '"' && text[i + 1] === '"') {
+        cell += '"'
+        i++
+      } else if (ch === '"') {
+        quoted = false
+      } else {
+        cell += ch
+      }
+    } else if (ch === '"') {
+      quoted = true
+    } else if (ch === ",") {
+      row.push(cell)
+      cell = ""
+    } else if (ch === "\n" || ch === "\r") {
       if (ch === "\r" && text[i + 1] === "\n") i++
       row.push(cell)
       rows.push(row)
       row = []
       cell = ""
-    } else cell += ch
+    } else {
+      cell += ch
+    }
   }
-  if (cell !== "" || row.length) (row.push(cell), rows.push(row))
+  if (cell !== "" || row.length) {
+    row.push(cell)
+    rows.push(row)
+  }
   return rows
 }
 
