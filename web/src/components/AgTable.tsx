@@ -43,6 +43,8 @@ export type GridColumn = {
   hide?: boolean
   flex?: number
   minWidth?: number
+  /** 釘在左邊：欄位多到要橫向捲動時，維度欄（英雄、玩家）仍留在眼前 */
+  pinned?: "left"
 }
 
 type Row = Record<string, unknown>
@@ -173,6 +175,7 @@ export function AgTable({
           flex: col.flex ?? (isMetric ? 1 : 2),
           minWidth: col.minWidth ?? (isMetric ? 96 : 170),
           hide: col.hide,
+          pinned: col.pinned,
           headerClass: isMetric && !col.cell ? "ag-right-aligned-header" : undefined,
           // 排序照原始數值，不受格式化字串影響
           comparator: isMetric

@@ -1,5 +1,7 @@
 import { createContext, useContext, useMemo, useState, type CSSProperties } from "react"
-import { BarCell, RecordCell, StatCell } from "@/components/cells"
+import { BarCell, RecordCell, StatCell, solidMax, weightedAvg } from "@/components/cells"
+import { ContribScore } from "@/components/Contribution"
+import { PERF_GAP } from "@/hooks/useContribution"
 import { Filter, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -43,6 +45,16 @@ const MEASURES = [
   "participants.gpm",
   "participants.kill_participation",
   "participants.damage_share",
+  "participants.taken_per_min",
+  "participants.mitigated_per_min",
+  "participants.tank_share",
+  "participants.cc_time_per_min",
+  "participants.heal_per_min",
+  "participants.multikill_rate",
+  "participants.first_blood_rate",
+  "participants.pentas",
+  "contribution.perf",
+  "contribution.score",
 ]
 
 const n0 = (r: Record<string, unknown>, k: string) => num(r[k] as string | number | null) ?? 0
@@ -59,6 +71,8 @@ function buildColumns(rows: CubeRow[], overallWr: number | null, roleMix: RoleMi
   const avgDpm = totalGames
     ? rows.reduce((a, r) => a + n0(r, "participants.dpm") * n0(r, "participants.games"), 0) / totalGames
     : null
+  const maxTaken = solidMax(rows, "participants.taken_per_min", "participants.games", MIN_GAMES)
+  const avgTaken = weightedAvg(rows, "participants.taken_per_min", "participants.games")
   // 戰績刻度一律是「整體勝率」（你的、追蹤對象的或所有人的），不從表格各列回推：六邊形篩成某一類之後，
   // 回推出來的會變成那一類的平均，刻度跟著移動，就看不出這一類整體是高是低
   const avgWr = overallWr
@@ -71,6 +85,7 @@ function buildColumns(rows: CubeRow[], overallWr: number | null, roleMix: RoleMi
       iconKey: "champions.icon_path",
       flex: 1.4,
       minWidth: 150,
+      pinned: "left",
       // 名稱下面是「你最常把它出成什麼」：同一隻英雄不同場可能不同，只列最多的那種，其餘寫在 title
       cell: (r) => {
         const name = String(r["champions.name"] ?? "—")
@@ -143,8 +158,74 @@ function buildColumns(rows: CubeRow[], overallWr: number | null, roleMix: RoleMi
         />
       ),
     },
+    {
+      // 當局表現分：和同類型、同時長帶的人比，50 是中位數；隊內排名是另一個零和的分數，放在補充裡對照
+      key: "contribution.perf",
+      title: "表現",
+      kind: "metric",
+      flex: 0.7,
+      minWidth: 90,
+      cell: (r) => {
+        const perf = opt(r, "contribution.perf")
+        const rank = opt(r, "contribution.score")
+        return (
+          <StatCell
+            main={<ContribScore dev={perf === null ? null : perf - 50} gap={PERF_GAP} className="text-sm font-semibold" />}
+            sub={`隊內 ${rank === null ? "—" : Math.round(rank)}`}
+          />
+        )
+      },
+    },
+    {
+      key: "participants.taken_per_min",
+      title: "承受（每分鐘傷害）",
+      kind: "metric",
+      flex: 1.6,
+      minWidth: 190,
+      cell: (r) => (
+        <BarCell
+          value={opt(r, "participants.taken_per_min")}
+          max={maxTaken}
+          reference={avgTaken}
+          label={round0(n0(r, "participants.taken_per_min"))}
+          sub={`減免 ${round0(n0(r, "participants.mitigated_per_min"))}/分 · 佔隊 ${round1(n0(r, "participants.tank_share"))}%`}
+        />
+      ),
+    },
+    {
+      key: "participants.cc_time_per_min",
+      title: "控場・治療",
+      kind: "metric",
+      flex: 1,
+      minWidth: 120,
+      cell: (r) => (
+        <StatCell
+          main={`${round1(n0(r, "participants.cc_time_per_min"))} 秒/分`}
+          sub={`治療 ${round0(n0(r, "participants.heal_per_min"))}/分`}
+        />
+      ),
+    },
+    {
+      key: "participants.multikill_rate",
+      title: "多殺・首殺",
+      kind: "metric",
+      flex: 1,
+      minWidth: 140,
+      cell: (r) => (
+        <StatCell
+          main={`多殺 ${Math.round(n0(r, "participants.multikill_rate"))}%`}
+          sub={`首殺 ${Math.round(n0(r, "participants.first_blood_rate"))}% · 五殺 ${round0(n0(r, "participants.pentas"))}`}
+        />
+      ),
+    },
     { key: "participants.wins", title: "勝場", kind: "metric", hide: true },
     { key: "participants.losses", title: "敗場", kind: "metric", hide: true },
+    { key: "participants.mitigated_per_min", title: "每分鐘減免傷害", kind: "metric", hide: true },
+    { key: "participants.tank_share", title: "承受佔比", kind: "metric", hide: true },
+    { key: "participants.heal_per_min", title: "每分鐘治療", kind: "metric", hide: true },
+    { key: "participants.first_blood_rate", title: "首殺率", kind: "metric", hide: true },
+    { key: "participants.pentas", title: "五殺次數", kind: "metric", hide: true },
+    { key: "contribution.score", title: "隊內貢獻排名", kind: "metric", hide: true },
     { key: "participants.avg_kills", title: "平均擊殺", kind: "metric", hide: true },
     { key: "participants.avg_deaths", title: "平均死亡", kind: "metric", hide: true },
     { key: "participants.avg_assists", title: "平均助攻", kind: "metric", hide: true },
@@ -523,8 +604,8 @@ function ChampionsBody({ onWho }: { onWho: (who: Who) => void }) {
           <EmptyState>這個條件下還沒有對局。</EmptyState>
         ) : (
           <div className="grid gap-6 min-[1500px]:grid-cols-[340px_minmax(0,1fr)]">
-            {/* 表格欄位最小寬度加總約 715px（KDA、輸出的補充文字實測要 146／190px 才不被截斷），
-                加上 340px 的雷達，1500px 以上的視窗才並排得下，更窄就上下排 */}
+            {/* 表格欄位最小寬度加總約 1200px（KDA、輸出、承受的補充文字實測要 146／190px 才不被截斷），
+                比容器寬的時候表格橫向捲動，英雄名那欄釘在左邊；1500px 以上的視窗雷達與表格並排，更窄就上下排 */}
             <RoleRadar role={activeRole} spec={spec} baseline={baseline} totalGames={totalGames} onRole={setRole} />
 
             <div className="flex min-w-0 flex-col gap-2">
@@ -561,7 +642,7 @@ function ChampionsBody({ onWho }: { onWho: (who: Who) => void }) {
                 />
               )}
               <p className="text-[11px] text-muted-foreground">
-                預設依場次由多到少。戰績條的刻度是{baselineLabel}，輸出條的刻度是表中英雄的平均
+                預設依場次由多到少。戰績條的刻度是{baselineLabel}，輸出與承受條的刻度是表中英雄的平均；表現是當局表現分（50＝同類型的中位數），小字是隊內排名
               </p>
             </div>
           </div>
