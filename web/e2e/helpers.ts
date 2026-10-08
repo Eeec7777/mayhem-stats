@@ -202,7 +202,7 @@ export async function readCsv(path: string): Promise<string[][]> {
 
 export type BarInfo = { label: string; value: number }
 
-/** 目前畫面上看得到的長條（超過一頁的長條圖用 dataZoom 只顯示一段），依圖上由上到下排列。 */
+/** 目前畫面上看得到的長條（超過一頁的長條圖用 dataZoom 只顯示一段），依 yAxis.data 的順序——橫向長條圖第一個類別畫在最下面，所以這個順序是圖上由下到上。 */
 export async function visibleBars(chart: Locator): Promise<BarInfo[]> {
   return chart.evaluate((el) => {
     const c = (el.parentElement as ChartHost).__chart as unknown as {
