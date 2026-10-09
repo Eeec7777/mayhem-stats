@@ -63,6 +63,31 @@ test.describe("好友比較頁：全員一覽", () => {
     await expect(panel(page, "全員一覽").locator("button.slide-in").first()).toBeVisible()
   })
 
+  test("最上面一列「全體參賽者」是參照：場次、勝率 50%、KDA 對獨立 SQL，雷達八種出裝的場次對 SQL", async ({ page }) => {
+    const ref = page.getByTestId("crew-reference-row")
+    await expect(ref).toContainText("參照")
+    const r = sql(
+      `SELECT COUNT(*) n, AVG(p.kills) k, AVG(p.assists) a, AVG(p.deaths) d, AVG(p.win) w
+         FROM match_participants p JOIN matches m USING (platform_id, game_id) WHERE m.queue_id = 2400`,
+    )[0]
+    const kda = ((Number(r.k) + Number(r.a)) / Number(r.d)).toFixed(2)
+    await expect(ref).toContainText(`${r.n} 場・${(Number(r.w) * 100).toFixed(1)}%・KDA ${kda}`)
+    // 雷達的 tooltip 列出八種出裝各自的場次（沒判定出裝的不在雷達上，個人的雷達也一樣）；每一種都對 SQL
+    const tip = (await ref.locator("svg title").textContent())!
+    const lines = [...tip.matchAll(/^(\S+(?: \S+)?) \d+%（(\d+) 場/gm)].map((m) => ({ label: m[1], games: Number(m[2]) }))
+    expect(lines).toHaveLength(8)
+    for (const l of lines) {
+      const n = sql(
+        `SELECT COUNT(*) n FROM match_participants p JOIN matches m USING (platform_id, game_id)
+           JOIN mat_builds b ON b.participant_rowid = p.rowid WHERE m.queue_id = 2400 AND b.build_role = ?`,
+        [l.label],
+      )[0].n
+      expect(l.games, l.label).toBe(Number(n))
+    }
+    // 參照列不是按鈕，不算進「每人一列」
+    await expect(ref.locator("button")).toHaveCount(0)
+  })
+
   test("每人一列，依場次多到少排；場次、勝率、KDA 和 SQL 一致", async ({ page }) => {
     const rows = panel(page, "全員一覽").locator("button.slide-in")
     const members = crewMembers()

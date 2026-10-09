@@ -1005,8 +1005,13 @@ export function Crew() {
       limit: NO_LIMIT,
     }),
   )
-  const error = summary.error ?? roles.error ?? champs.error ?? augments.error
-  const loading = summary.loading || roles.loading || champs.loading || augments.loading
+  // 參照列：所有參賽者的整體與出裝定位比例（不鎖玩家，也不受上方「拿掉誰」影響）
+  const everyone = useCube(apply({ measures: ["participants.games", "participants.winrate", "participants.kda"] }, "all"))
+  const everyoneRoles = useCube(
+    apply({ measures: ["participants.games", "participants.wins", "participants.winrate"], dimensions: ["builds.build_role"], limit: NO_LIMIT }, "all"),
+  )
+  const error = summary.error ?? roles.error ?? champs.error ?? augments.error ?? everyone.error ?? everyoneRoles.error
+  const loading = summary.loading || roles.loading || champs.loading || augments.loading || everyone.loading || everyoneRoles.loading
 
   const sumOf = (puuid: string) => summary.rows.find((r) => r["participants.puuid"] === puuid)
   const gamesOf = (puuid: string) => n0(sumOf(puuid), "participants.games")
@@ -1116,6 +1121,32 @@ export function Crew() {
                 <span className="grid grid-cols-2 gap-3">
                   <span className="text-win">英雄：好的一面</span>
                   <span className="text-loss">英雄：要注意的</span>
+                </span>
+              </div>
+              <div
+                data-testid="crew-reference-row"
+                className="grid w-full grid-cols-[13rem_6rem_minmax(0,1fr)_minmax(0,1fr)] items-center gap-4 border-b border-dashed bg-muted/20 px-2 py-1"
+              >
+                <span className="min-w-0">
+                  <span className="flex items-baseline gap-1.5 text-sm font-medium">
+                    全體參賽者
+                    <span className="rounded border border-dashed px-1 text-[10px] font-normal text-muted-foreground">參照</span>
+                  </span>
+                  <span className="mt-0.5 block font-mono text-[11px] tabular-nums text-muted-foreground">
+                    {n0(everyone.rows[0], "participants.games")} 場・{opt(everyone.rows[0], "participants.winrate")?.toFixed(1) ?? "—"}%・KDA{" "}
+                    {opt(everyone.rows[0], "participants.kda")?.toFixed(2) ?? "—"}
+                  </span>
+                </span>
+                <MiniHex
+                  data={BUILD_ROLES.map((label) => {
+                    const r = everyoneRoles.rows.find((x) => x["builds.build_role"] === label)
+                    return { label, games: n0(r, "participants.games"), wins: n0(r, "participants.wins"), winrate: opt(r, "participants.winrate") }
+                  })}
+                  total={n0(everyone.rows[0], "participants.games")}
+                  call={{ pos: [], neg: [], all: [] }}
+                />
+                <span className="col-span-2 text-[11px] text-muted-foreground">
+                  把資料庫裡每場十位參賽者都算進來的平均：雷達是一般玩家各出裝佔多少，拿來和下面每個人的形狀對照他偏好什麼；勝率每場兩隊都算，必然是 50%。
                 </span>
               </div>
               {ordered.map((p, i) => {
