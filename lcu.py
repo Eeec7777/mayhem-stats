@@ -122,6 +122,15 @@ class LCUClient:
         呼叫端自己處理。對局明細端點沒有治療／護盾隊友的量，這一份有沒有，要打完一場才知道。"""
         return self.get("/lol-end-of-game/v1/eog-stats-block")
 
+    def game_timeline(self, game_id):
+        """逐幀時間軸：每分鐘一格（每位參賽者的經濟、經驗、位置），加上擊殺、拆建築、買賣裝等帶時間戳的事件。
+        連很舊的場次都抓得到（2026-10 實測）；參賽者身上的 timeline 欄位是空的，要打這個端點。"""
+        return self.get(f"/lol-match-history/v1/game-timelines/{game_id}", timeout=30)
+
+    def champ_select_session(self):
+        """選角階段的 session：雙方陣容、板凳英雄、重抽次數、交換請求。不在選角時回 404（HTTPError），呼叫端自己處理。"""
+        return self.get("/lol-champ-select/v1/session")
+
     def asset(self, name):
         return self.get(f"/lol-game-data/assets/v1/{name}.json")
 

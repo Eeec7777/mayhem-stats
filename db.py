@@ -8,6 +8,7 @@ import datetime
 import json
 import sqlite3
 import time
+import zlib
 from pathlib import Path
 
 DB_PATH = Path(__file__).parent / "mayhem.db"
@@ -162,6 +163,35 @@ CREATE TABLE IF NOT EXISTS eog_player_stats (
   PRIMARY KEY (game_id, puuid)
 );
 
+-- 逐幀時間軸（/lol-match-history/v1/game-timelines/{gameId}）：每分鐘的經濟、經驗、位置，
+-- 以及擊殺、拆建築、買賣裝等帶時間戳的事件。一場幾百 KB，原始 JSON 用 zlib 壓縮後存（約十分之一），
+-- 要分析時再拆。只收「開始收時間軸之後」新入庫的場次（kv.timeline_since），舊場次不回補。
+CREATE TABLE IF NOT EXISTS match_timelines (
+  platform_id TEXT    NOT NULL,
+  game_id     INTEGER NOT NULL,
+  fetched_at  INTEGER NOT NULL,
+  frames      INTEGER,
+  raw_gz      BLOB    NOT NULL,
+  PRIMARY KEY (platform_id, game_id)
+);
+
+-- 選角過程（/lol-champ-select/v1/session）：選角時每次內容有變就記一筆精簡快照
+-- （我方每人的英雄、板凳、重抽次數、交換），snapshots 是依時間排的 JSON 陣列；raw_last 是最後一份完整 session。
+-- 只有站長自己參與、而且採集器開著的選角才有；用 game_id 對回 matches。raw 裡有隊友名字，只留在本機。
+CREATE TABLE IF NOT EXISTS champ_select_sessions (
+  game_id    INTEGER PRIMARY KEY,
+  started_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  snapshots  TEXT    NOT NULL,
+  raw_last   TEXT    NOT NULL
+);
+
+-- 雜項設定（例如從什麼時候開始收時間軸）
+CREATE TABLE IF NOT EXISTS kv (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_m_queue        ON matches(queue_id);
 CREATE INDEX IF NOT EXISTS idx_pa_augment     ON participant_augments(augment_id);
 CREATE INDEX IF NOT EXISTS idx_pi_item        ON participant_items(item_id);
@@ -265,6 +295,10 @@ def _migrate(conn):
         _backfill_from_raw(conn, missing)
 
     backfill_eog_players(conn)
+
+    # 從第一次啟動新版開始收時間軸：記下時間點，之前入庫的場次不回補
+    with conn:
+        conn.execute("INSERT OR IGNORE INTO kv (key, value) VALUES ('timeline_since', ?)", (str(int(time.time())),))
 
 
 def _backfill_local_time(conn):
@@ -674,3 +708,97 @@ def finish_run(conn, run_id, seen, new, error=None):
                WHERE id = ?""",
             (int(time.time()), seen, new, error, run_id),
         )
+
+
+# ── 逐幀時間軸 ──────────────────────────────────────────────────────────────
+
+def store_timeline(conn, platform_id, game_id, timeline):
+    """存一場的時間軸（zlib 壓縮的原始 JSON）。已經有就不動，回傳有沒有寫入。"""
+    if not game_id or not isinstance(timeline, dict) or not timeline.get("frames"):
+        return False
+    raw = zlib.compress(json.dumps(timeline, ensure_ascii=False, separators=(",", ":")).encode("utf-8"), 6)
+    with conn:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO match_timelines (platform_id, game_id, fetched_at, frames, raw_gz) VALUES (?,?,?,?,?)",
+            (platform_id or "", game_id, int(time.time()), len(timeline["frames"]), raw),
+        )
+    return cur.rowcount > 0
+
+
+def load_timeline(conn, platform_id, game_id):
+    row = conn.execute(
+        "SELECT raw_gz FROM match_timelines WHERE platform_id = ? AND game_id = ?", (platform_id or "", game_id)
+    ).fetchone()
+    return json.loads(zlib.decompress(row[0])) if row else None
+
+
+def games_missing_timeline(conn, limit=10):
+    """開始收時間軸之後入庫、但還沒有時間軸的場次（新的在前），給採集器重試用。"""
+    since = conn.execute("SELECT value FROM kv WHERE key = 'timeline_since'").fetchone()
+    if not since:
+        return []
+    return [
+        (row[0], row[1])
+        for row in conn.execute(
+            """SELECT m.platform_id, m.game_id FROM matches m
+               WHERE m.ingested_at >= ? AND NOT EXISTS (
+                 SELECT 1 FROM match_timelines t WHERE t.platform_id = m.platform_id AND t.game_id = m.game_id)
+               ORDER BY m.game_creation DESC LIMIT ?""",
+            (int(since[0]), limit),
+        )
+    ]
+
+
+# ── 選角過程 ────────────────────────────────────────────────────────────────
+
+def champ_select_compact(session):
+    """選角 session 裡分析要用的部分。比對前後兩份有沒有變，只看這些欄位（計時器每秒都在變，不算）。"""
+    timer = session.get("timer") or {}
+    return {
+        "phase": timer.get("phase"),
+        "localCell": session.get("localPlayerCellId"),
+        "rerolls": session.get("rerollsRemaining"),
+        "myTeam": [
+            {
+                "cell": m.get("cellId"),
+                "puuid": m.get("puuid") or None,
+                "champ": m.get("championId") or 0,
+                "intent": m.get("championPickIntent") or 0,
+            }
+            for m in sorted(session.get("myTeam") or [], key=lambda m: m.get("cellId") or 0)
+        ],
+        "bench": [b.get("championId") for b in session.get("benchChampions") or [] if b.get("championId")],
+        "trades": sorted(
+            ({"cell": t.get("cellId"), "state": t.get("state")} for t in session.get("trades") or []),
+            key=lambda t: (t["cell"] or 0, t["state"] or ""),
+        ),
+    }
+
+
+def store_champ_select(conn, session, now=None):
+    """記一筆選角快照：和上一筆內容一樣就只更新時間與完整 session。回傳有沒有新增快照。
+    gameId 還沒出現（0 或沒有）的 session 不存，下一輪再看。"""
+    game_id = session.get("gameId")
+    if not game_id:
+        return False
+    now = int(now if now is not None else time.time())
+    snap = {"t": now, **champ_select_compact(session)}
+    raw = json.dumps(session, ensure_ascii=False, separators=(",", ":"))
+    with conn:
+        row = conn.execute("SELECT snapshots FROM champ_select_sessions WHERE game_id = ?", (game_id,)).fetchone()
+        if row is None:
+            conn.execute(
+                "INSERT INTO champ_select_sessions (game_id, started_at, updated_at, snapshots, raw_last) VALUES (?,?,?,?,?)",
+                (game_id, now, now, json.dumps([snap], ensure_ascii=False), raw),
+            )
+            return True
+        snaps = json.loads(row[0])
+        last = {k: v for k, v in snaps[-1].items() if k != "t"} if snaps else None
+        changed = last != {k: v for k, v in snap.items() if k != "t"}
+        if changed:
+            snaps.append(snap)
+        conn.execute(
+            "UPDATE champ_select_sessions SET updated_at = ?, snapshots = ?, raw_last = ? WHERE game_id = ?",
+            (now, json.dumps(snaps, ensure_ascii=False), raw, game_id),
+        )
+    return changed
