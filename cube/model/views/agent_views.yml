@@ -230,6 +230,8 @@ views:
           - name: enemy_support
           - name: team_comp
           - name: enemy_comp
+          - name: team_archetype
+          - name: enemy_archetype
 
       - join_path: participants.contribution
         includes:

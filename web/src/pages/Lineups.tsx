@@ -3,14 +3,14 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Skeleton } from "@/components/ui/skeleton"
 import { EmptyState, Panel } from "@/components/primitives"
 import { DrillPanel, MAX_GAME_IDS } from "@/components/MatchList"
-import { GapForest, Findings, ForestLegend } from "@/components/GapForest"
-import { gapOf, reachOf, type GapRow } from "@/lib/gap"
+import { GapForest, Findings, ForestAxis, ForestLegend, ForestTrack } from "@/components/GapForest"
+import { binomialP, gapOf, reachOf, strengthOf, zFor, type GapRow, type Strength } from "@/lib/gap"
 import { WhoSwitch } from "@/components/WhoSwitch"
 import { useCube } from "@/hooks/useCube"
 import { num, type CubeFilter, type CubeRow } from "@/lib/cube"
 import { useCrumb } from "@/lib/breadcrumb"
 import { usePageWho } from "@/lib/whoState"
-import { participantRows, useWhoScope, type Who } from "@/lib/who"
+import { participantRows, useWhoScope, type Who, type WhoScope } from "@/lib/who"
 import { BUILD_ROLES, NO_LIMIT } from "./shared"
 import { cn } from "@/lib/utils"
 
@@ -258,6 +258,164 @@ type BuildContextId = keyof typeof BUILD_CONTEXTS
 /** 一邊（我方或敵方）的三種因素，各自是一組森林圖的列 */
 const SIDE_FACETS: FacetId[] = ["front", "mix", "support"]
 
+/** 陣容原型：先用常理定義「什麼樣的陣容應該強或弱」，再拿資料驗證。
+ *  定義放在語意層（comp_context.team_archetype），這裡只決定怎麼畫。 */
+const ARCHETYPES = [
+  {
+    id: "前排重",
+    def: "坦克＋鬥士 3 個以上（坦克多、輸出少）",
+    prior: "預期偏弱",
+    why: "坦克多、輸出核心少：撐得久但殺不死人，大亂鬥推塔決勝要靠團戰輸出",
+  },
+  {
+    id: "均衡",
+    def: "前排與輸出都有",
+    prior: "預期偏強",
+    why: "前排扛得住、輸出也夠",
+  },
+  {
+    id: "輸出多",
+    def: "輸出核心 4 個以上（前排少）",
+    prior: "沒有預期",
+    why: "輸出高但前排薄，容易被集火；常理上說不準強弱",
+  },
+] as const
+
+const VERDICT_CLASS: Record<Strength, string> = {
+  強勢: "border-win/50 bg-win/15 text-win font-semibold",
+  偏強: "border-dashed border-win/40 text-win",
+  看不出: "border-dashed text-muted-foreground",
+  偏弱: "border-dashed border-loss/40 text-loss",
+  不強勢: "border-loss/50 bg-loss/15 text-loss font-semibold",
+}
+
+/** 每種原型的強弱：一個「所有隊伍」（兩隊都算，資料量最大）、一個「你們」（目前看誰的範圍）。
+ *  判定只看所有隊伍；強勢／不強勢要區間（已依一次比較三組校正）整段在 50% 的同一邊才給。 */
+function Archetypes({ who, scope }: { who: Who; scope: WhoScope }) {
+  const allScope = useWhoScope("all")
+  const dim = "comp_context.team_archetype"
+  const all = useCube(allScope.q({ measures: [GAMES, WINS], dimensions: [dim] }))
+  const mine = useCube(who === "all" ? null : scope.q({ measures: [GAMES, WINS], dimensions: [dim] }))
+  // 對決實測：一場裡只有一邊是這種原型時，這一邊贏幾場。一場只算一次，不會有「兩隊互相對立、其實是同一個結果」的問題
+  const perGame = useCube(allScope.q({ measures: [GAMES, WINS], dimensions: ["matches.game_id", dim], limit: NO_LIMIT }))
+
+  const rowsOf = (rows: CubeRow[]): GapRow[] =>
+    ARCHETYPES.map((a) => {
+      const r = rows.find((x) => x[dim] === a.id)
+      return { key: a.id, label: a.id, games: n0(r, GAMES), wins: n0(r, WINS) }
+    })
+  const allRows = rowsOf(all.rows)
+  const mineRows = rowsOf(mine.rows)
+  const total = allRows.reduce((a, r) => a + r.games, 0)
+  const base = total ? (100 * allRows.reduce((a, r) => a + r.wins, 0)) / total : 50
+  const mineTotal = mineRows.reduce((a, r) => a + r.games, 0)
+  const mineBase = mineTotal ? (100 * mineRows.reduce((a, r) => a + r.wins, 0)) / mineTotal : 50
+  const z = zFor(ARCHETYPES.length)
+  const reach = Math.max(reachOf(allRows, base, z), who === "all" ? 0 : reachOf(mineRows, mineBase, z))
+
+  const paired = ARCHETYPES.map((a) => {
+    const lone = perGame.rows.filter((r) => r[dim] === a.id && n0(r, GAMES) === 1)
+    const x = lone.reduce((acc, r) => acc + n0(r, WINS), 0)
+    return { id: a.id, n: lone.length, x, p: binomialP(x, lone.length) }
+  })
+
+  const loading = all.loading || perGame.loading || (who !== "all" && mine.loading)
+  const showMine = who !== "all"
+  const grid = showMine
+    ? "grid-cols-[minmax(0,6.5rem)_minmax(6rem,1fr)_4.5rem] lg:grid-cols-[13rem_5.5rem_minmax(10rem,1fr)_minmax(10rem,1fr)_5rem] lg:gap-x-8"
+    : "grid-cols-[minmax(0,6.5rem)_minmax(6rem,1fr)_4.5rem] lg:grid-cols-[13rem_5.5rem_minmax(10rem,1fr)_5rem]"
+
+  const cell = (row: GapRow, baseline: number, unit: string) => {
+    const g = gapOf(row, baseline, z)
+    return (
+      <div>
+        <ForestTrack diff={g.interval ? g.diff : null} interval={g.interval} clear={g.clear} reach={reach} empty={row.games ? "樣本太少" : undefined} />
+        <div className="-mt-1 text-center font-mono text-[11px] tabular-nums text-muted-foreground">
+          <b className={cn("text-xs", g.clear ? (g.diff > 0 ? "text-win" : "text-loss") : "text-foreground")}>{row.games ? `${g.winrate.toFixed(0)}%` : "—"}</b>
+          ・{row.games} {unit}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <Panel
+      title="陣容強弱：哪些陣容強勢、哪些不強勢"
+      caption="先用常理把一隊分成三種原型，再看資料同不同意。判定看「所有隊伍」（每場兩隊都算，資料量最大）；「你們」是目前『看誰』的範圍。區間整段在 50% 同一邊才寫強勢／不強勢，差 3 個百分點以上但還分不出的寫偏強／偏弱"
+    >
+      {loading ? (
+        <Skeleton className="h-[260px] w-full" />
+      ) : !total ? (
+        <EmptyState>這個條件下還沒有對局。</EmptyState>
+      ) : (
+        <div className="reveal space-y-4">
+          <div className="max-w-[64rem]">
+            <div className={cn("grid items-end gap-x-3", grid)}>
+              <span className="pb-1 text-[11px] text-muted-foreground">陣容原型</span>
+              <span className="hidden pb-1 text-[11px] text-muted-foreground lg:block">常理預期</span>
+              <div>
+                <div className="text-center text-[11px] font-medium">所有隊伍（兩隊都算）</div>
+                <ForestAxis reach={reach} center={`${base.toFixed(0)}%`} compact />
+              </div>
+              {showMine && (
+                <div className="hidden lg:block">
+                  <div className="text-center text-[11px] font-medium">你們（目前範圍）</div>
+                  <ForestAxis reach={reach} center={`${mineBase.toFixed(0)}%`} compact />
+                </div>
+              )}
+              <span className="pb-1 text-right text-[11px] text-muted-foreground">資料判定</span>
+            </div>
+            {ARCHETYPES.map((a, i) => {
+              const row = allRows[i]
+              const g = gapOf(row, base, z)
+              const verdict = strengthOf(g)
+              return (
+                <div
+                  key={a.id}
+                  data-testid="archetype-row"
+                  data-games={row.games}
+                  data-wins={row.wins}
+                  data-verdict={verdict}
+                  className={cn("grid items-center gap-x-3 border-b border-border/50 last:border-b-0", grid)}
+                >
+                  <div className="min-w-0 py-1.5">
+                    <div className="text-[13px] font-semibold">{a.id}</div>
+                    <div className="text-[11px] leading-snug text-muted-foreground">{a.def}</div>
+                  </div>
+                  <span className="hidden lg:block" title={a.why}>
+                    <span className="rounded border border-dashed px-1.5 py-0.5 text-[11px] text-muted-foreground">{a.prior}</span>
+                  </span>
+                  {cell(row, base, "隊")}
+                  {showMine && <div className="hidden lg:block">{cell(mineRows[i], mineBase, "隊")}</div>}
+                  <span className="text-right">
+                    <span className={cn("rounded border px-1.5 py-0.5 text-[11px]", VERDICT_CLASS[verdict])}>{verdict}</span>
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+          <div className="space-y-1 text-[11px] leading-relaxed text-muted-foreground">
+            <p data-testid="archetype-paired">
+              <b className="text-foreground">對決實測</b>（一場裡只有一邊是這種原型時，這一邊贏幾場；每場只算一次）：
+              {paired.map((x, i) => (
+                <span key={x.id}>
+                  {i > 0 && "；"}
+                  {x.id} {x.x}/{x.n}（{x.n ? ((100 * x.x) / x.n).toFixed(0) : "—"}%，p = {x.p.toFixed(3)}）
+                </span>
+              ))}
+              。
+            </p>
+            <p>
+              原型只看出裝定位，不看打出多少傷害（那是結果）。「所有隊伍」的勝率合起來必然是 50%（一場一勝一敗）；
+              只有一邊的場次樣本小時，「你們」那欄會很寬，別硬讀。方法與數字見 docs/lineup-winrate.md。
+            </p>
+          </div>
+        </div>
+      )}
+    </Panel>
+  )
+}
+
 export function Lineups() {
   const [who, setWhoState] = usePageWho()
   const scope = useWhoScope(who)
@@ -390,8 +548,9 @@ export function Lineups() {
         <EmptyState>還沒有追蹤任何玩家。到「追蹤對象」頁加人之後，這裡就能看他們的陣容數據。</EmptyState>
       ) : (
         <>
+          <Archetypes who={who} scope={scope} />
           <Panel
-            title="什麼陣容比較會贏"
+            title="拆開看：各項陣容條件"
             caption={`每一列是一種陣容：點是那種陣容的勝率比整體 ${baseline === null ? "—" : `${baseline.toFixed(1)}%`} 高或低幾個百分點，線是 95% 區間。${
               who === "account" ? "" : "一隊只算一次（同隊好幾位追蹤對象也是一隊）。"
             }${who === "all" ? "所有人模式下兩隊都算，敵方就是我方的鏡像，所以只畫一邊。" : ""}點一列看那些場次`}

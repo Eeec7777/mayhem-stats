@@ -37,6 +37,7 @@ cubes:
               CASE WHEN b.build_role IN ('AD 鬥士', 'AD 輸出', 'AD 刺客') THEN 1 ELSE 0 END AS ad,
               CASE WHEN b.build_role IN ('AP 鬥士', 'AP 輸出', 'AP 刺客') THEN 1 ELSE 0 END AS ap,
               CASE WHEN b.build_role = '輔助' THEN 1 ELSE 0 END AS sup,
+              CASE WHEN b.build_role IN ('AD 輸出', 'AD 刺客', 'AP 輸出', 'AP 刺客') THEN 1 ELSE 0 END AS carry,
               COALESCE(mp.dmg_magic, 0) AS magic,
               COALESCE(mp.dmg_physical, 0) + COALESCE(mp.dmg_magic, 0) + COALESCE(mp.dmg_true, 0) AS total
             FROM match_participants mp
@@ -52,6 +53,8 @@ cubes:
               SUM(ap) OVER (PARTITION BY platform_id, game_id) AS game_ap,
               SUM(sup) OVER (PARTITION BY platform_id, game_id, team_id) AS team_sup,
               SUM(sup) OVER (PARTITION BY platform_id, game_id) AS game_sup,
+              SUM(carry) OVER (PARTITION BY platform_id, game_id, team_id) AS team_carry,
+              SUM(carry) OVER (PARTITION BY platform_id, game_id) AS game_carry,
               SUM(magic) OVER (PARTITION BY platform_id, game_id, team_id) AS team_magic,
               SUM(total) OVER (PARTITION BY platform_id, game_id, team_id) AS team_total,
               SUM(magic) OVER (PARTITION BY platform_id, game_id) AS game_magic,
@@ -66,7 +69,8 @@ cubes:
             team_front,
             team_ad, game_ad - team_ad AS enemy_ad,
             team_ap, game_ap - team_ap AS enemy_ap,
-            team_sup, game_sup - team_sup AS enemy_sup
+            team_sup, game_sup - team_sup AS enemy_sup,
+            team_carry, game_carry - team_carry AS enemy_carry
           FROM sums
 
     # 與 participants.yml 相同的 refresh key，理由寫在那裡。SQL 必須一字不差才會被合併。
@@ -166,6 +170,30 @@ cubes:
         title: 敵方輔助
         description: "敵方五人裡有沒有出輔助裝的人。"
         sql: "CASE WHEN enemy_sup > 0 THEN '有輔助' ELSE '沒有輔助' END"
+        type: string
+        meta:
+          group: 陣容
+
+      # ── 陣容原型：坦克多、輸出不夠的隊伍是不是比較弱 ──
+      # 「輸出核心」＝出裝是 AD 輸出、AD 刺客、AP 輸出、AP 刺客的人（鬥士不算：他們有前排也有輸出，歸前排）。
+      # 前排 3 個以上時剩下最多 2 個位置，輸出核心必然 ≤2，所以「前排重」本身就是「坦克多、輸出少」。
+      # 三種互斥：前排重（前排 ≥3）→ 輸出多（輸出核心 ≥4，前排必然 ≤1）→ 其餘「均衡」。
+      # 界線看資料（2026-10-09，全資料庫 1106 隊）：前排重 156 隊勝率 42%、均衡 458 隊 54%、輸出多 492 隊 49%；
+      # 一場只有一邊是前排重的 124 場裡，前排重那邊只贏 50 場（40%，二項檢定 p = 0.038）。
+      # 輸出核心 ≤1 的更極端類型只有 35 場可比，分不出來，所以不另外切。
+      # 不用實際打出的傷害（那是打完的結果）；方法與數字見 docs/lineup-winrate.md。
+      - name: team_archetype
+        title: 我方陣容原型
+        description: "我方五人（含自己）依出裝定位分三種：「前排重」＝坦克、AD 鬥士、AP 鬥士合計 3 個以上（輸出核心必然 ≤2，坦克多輸出少）；「輸出多」＝輸出核心（AD／AP 輸出與刺客）4 個以上；其餘「均衡」。"
+        sql: "CASE WHEN team_front >= 3 THEN '前排重' WHEN team_carry >= 4 THEN '輸出多' ELSE '均衡' END"
+        type: string
+        meta:
+          group: 陣容
+
+      - name: enemy_archetype
+        title: 敵方陣容原型
+        description: "敵方五人依出裝定位分三種，分組同我方陣容原型：前排重／輸出多／均衡。"
+        sql: "CASE WHEN enemy_front >= 3 THEN '前排重' WHEN enemy_carry >= 4 THEN '輸出多' ELSE '均衡' END"
         type: string
         meta:
           group: 陣容

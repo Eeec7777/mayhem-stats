@@ -50,7 +50,7 @@ const tally = <T,>(rows: T[], key: (r: T) => string, win: (r: T) => number) => {
 
 /** 森林圖的一列（GapForest）：data-games / data-wins 是那一組的場次與勝場 */
 const gapRow = (scope: Locator, label: string) => scope.getByTestId("gap-row").filter({ has: scope.page().getByText(label, { exact: true }) })
-const sidePanel = (page: Page) => page.locator('[data-slot="card"]', { has: page.getByText("什麼陣容比較會贏", { exact: true }) })
+const sidePanel = (page: Page) => page.locator('[data-slot="card"]', { has: page.getByText("拆開看：各項陣容條件", { exact: true }) })
 const buildPanel = (page: Page) => page.locator('[data-slot="card"]', { has: page.getByText("這種陣容下出什麼裝", { exact: true }) })
 /** 一邊（我方／敵方）的那一欄 */
 const sideColumn = (page: Page, title: RegExp) => sidePanel(page).locator("div.space-y-2", { has: page.getByText(title) }).first()
@@ -270,5 +270,96 @@ test.describe("陣容頁：看誰的數據", () => {
     const mine = sideColumn(page, /^我方（含那位玩家自己）$/)
     const sum = await mine.getByTestId("gap-row").evaluateAll((els) => els.slice(0, 4).reduce((a, e) => a + Number(e.getAttribute("data-games")), 0))
     expect(sum).toBe(Number(teams))
+  })
+})
+
+/** 全資料庫每一隊（兩隊都算）的陣容原型，獨立用 SQL 算：前排＝坦克／鬥士，輸出核心＝AD／AP 輸出與刺客 */
+function allTeams() {
+  const rows = sql(
+    `SELECT p.platform_id, p.game_id, p.team_id, MAX(p.win) AS win,
+            SUM(b.build_role = '坦克' OR b.build_role LIKE '%鬥士') AS front,
+            SUM(b.build_role IN ('AD 輸出', 'AD 刺客', 'AP 輸出', 'AP 刺客')) AS carry
+       FROM match_participants p JOIN matches m USING (platform_id, game_id) JOIN mat_builds b ON b.participant_rowid = p.rowid
+      WHERE m.queue_id = 2400 GROUP BY p.platform_id, p.game_id, p.team_id`,
+  )
+  return rows.map((r) => ({
+    game: `${r.platform_id}:${r.game_id}`,
+    win: Number(r.win),
+    arch: Number(r.front) >= 3 ? "前排重" : Number(r.carry) >= 4 ? "輸出多" : "均衡",
+  }))
+}
+
+/** Šidák 校正後 k = 3 的雙尾 z（α = 1 − 0.95^(1/3) ≈ 0.01695） */
+const Z3 = 2.3940
+
+function wilsonZ(x: number, n: number, z: number): [number, number] {
+  const p = x / n
+  const d = 1 + (z * z) / n
+  const c = (p + (z * z) / (2 * n)) / d
+  const h = (z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n))) / d
+  return [(c - h) * 100, (c + h) * 100]
+}
+
+test.describe("陣容頁：陣容強弱（原型）", () => {
+  test.beforeEach(async ({ page }) => {
+    await openPage(page, "lineups")
+    await expect(page.getByTestId("archetype-row").first()).toBeVisible()
+  })
+  const rows = (page: Page) => page.getByTestId("archetype-row")
+
+  test("三種原型：前排重、均衡、輸出多；每列的隊數與勝場和獨立 SQL 一致（兩隊都算）", async ({ page }) => {
+    const teams = allTeams()
+    await expect(rows(page)).toHaveCount(3)
+    for (const [i, arch] of ["前排重", "均衡", "輸出多"].entries()) {
+      const mine = teams.filter((t) => t.arch === arch)
+      await expect(rows(page).nth(i), arch).toContainText(arch)
+      await expect(rows(page).nth(i), arch).toHaveAttribute("data-games", String(mine.length))
+      await expect(rows(page).nth(i), arch).toHaveAttribute("data-wins", String(mine.reduce((a, t) => a + t.win, 0)))
+    }
+    // 兩隊都算：所有隊伍合起來勝率必然是 50%
+    expect(teams.reduce((a, t) => a + t.win, 0) / teams.length).toBeCloseTo(0.5, 2)
+  })
+
+  test("資料判定：強勢／不強勢要區間（Šidák 校正）整段在 50% 同一邊；差 3pp 以上寫偏強／偏弱，其餘看不出", async ({ page }) => {
+    const teams = allTeams()
+    const base = (100 * teams.reduce((a, t) => a + t.win, 0)) / teams.length
+    for (const [i, arch] of ["前排重", "均衡", "輸出多"].entries()) {
+      const mine = teams.filter((t) => t.arch === arch)
+      const x = mine.reduce((a, t) => a + t.win, 0)
+      const [lo, hi] = wilsonZ(x, mine.length, Z3)
+      const diff = (100 * x) / mine.length - base
+      const expected = lo > base ? "強勢" : hi < base ? "不強勢" : diff >= 3 ? "偏強" : diff <= -3 ? "偏弱" : "看不出"
+      await expect(rows(page).nth(i), arch).toHaveAttribute("data-verdict", expected)
+    }
+  })
+
+  test("對決實測：一場裡只有一邊是這種原型時，這一邊贏幾場，和獨立計算一致", async ({ page }) => {
+    const teams = allTeams()
+    const byGame = new Map<string, typeof teams>()
+    for (const t of teams) byGame.set(t.game, [...(byGame.get(t.game) ?? []), t])
+    for (const arch of ["前排重", "均衡", "輸出多"]) {
+      let n = 0
+      let x = 0
+      for (const g of byGame.values()) {
+        const hit = g.filter((t) => t.arch === arch)
+        if (hit.length === 1 && g.length === 2) {
+          n++
+          x += hit[0].win
+        }
+      }
+      await expect(page.getByTestId("archetype-paired")).toContainText(`${arch} ${x}/${n}（${Math.round((100 * x) / n)}%`)
+    }
+  })
+
+  test("每列有「常理預期」，不是只列資料", async ({ page }) => {
+    await expect(rows(page).nth(0)).toContainText("預期偏弱")
+    await expect(rows(page).nth(1)).toContainText("預期偏強")
+    await expect(rows(page).nth(2)).toContainText("沒有預期")
+  })
+
+  test("切到「所有人」只剩一欄（所有隊伍），沒有「你們」那欄", async ({ page }) => {
+    await page.getByRole("radio", { name: /所有人/ }).click()
+    await expect(page.getByText("你們（目前範圍）")).toHaveCount(0)
+    await expect(rows(page)).toHaveCount(3)
   })
 })
