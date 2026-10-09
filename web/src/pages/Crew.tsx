@@ -35,7 +35,8 @@ const ROLE_MIN = MIN_GAMES
 const CHAMP_MIN = 3
 const WR_GAP_ROLE = 3
 const WR_GAP_CHAMP = 5
-const PICKS_SHOWN = 3
+/** 一覽表每格最多放幾隻英雄頭像（出裝定位最多八種，全部列）；其餘寫「還有 N 隻」，完整排名在點開的抽屜裡 */
+const CHAMPS_SHOWN = 5
 
 const n0 = (r: CubeRow | undefined, k: string) => (r ? (num(r[k]) ?? 0) : 0)
 const opt = (r: CubeRow | undefined, k: string) => (r ? num(r[k]) : null)
@@ -90,7 +91,7 @@ type Pick = Item & { wr: number; perfAdj: number; verdict: Verdict }
 type Call = { pos: Pick[]; neg: Pick[]; all: Pick[] }
 
 /** 依勝率差與貢獻分數把一組（出裝定位或英雄）分成正面／負面兩邊 */
-function classify(items: Item[], base: number | null, minGames: number, wrGap: number, limit = PICKS_SHOWN): Call {
+function classify(items: Item[], base: number | null, minGames: number, wrGap: number): Call {
   if (base === null) return { pos: [], neg: [], all: [] }
   const all = items
     .filter((i) => i.games >= minGames)
@@ -100,16 +101,18 @@ function classify(items: Item[], base: number | null, minGames: number, wrGap: n
       return { ...i, wr, perfAdj, verdict: judge(wr, perfAdj, wrGap) }
     })
     .filter((i): i is Pick => i.verdict !== null)
-  // 強的判斷在前，同一級依「勝率差＋貢獻」的絕對值排，並列依名稱
+  // 排名：先看判斷的強弱（適合 > 非戰之罪 > 勝率好；不適合 > 靠隊友 > 勝率差），
+  // 同一級依貢獻差的大小（判斷以貢獻為主），再依勝率差，再依場次，並列依名稱。全部列出，不截斷
   const rank = (a: Pick, b: Pick) =>
     ORDER.indexOf(a.verdict) - ORDER.indexOf(b.verdict) ||
-    Math.abs(b.wr + b.perfAdj) - Math.abs(a.wr + a.perfAdj) ||
+    Math.abs(b.perfAdj) - Math.abs(a.perfAdj) ||
+    Math.abs(b.wr) - Math.abs(a.wr) ||
     b.games - a.games ||
     a.label.localeCompare(b.label, "zh-Hant")
   const sorted = [...all].sort(rank)
   return {
-    pos: sorted.filter((i) => VERDICT[i.verdict].side === "pos").slice(0, limit),
-    neg: sorted.filter((i) => VERDICT[i.verdict].side === "neg").slice(0, limit),
+    pos: sorted.filter((i) => VERDICT[i.verdict].side === "pos"),
+    neg: sorted.filter((i) => VERDICT[i.verdict].side === "neg"),
     all,
   }
 }
@@ -194,8 +197,9 @@ function RoleChips({ items }: { items: Pick[] }) {
   if (!items.length) return <span className="text-[11px] text-muted-foreground">—</span>
   return (
     <span className="flex flex-wrap content-start items-start gap-1">
-      {items.map((i) => (
-        <span key={i.label} title={tip(i)} className={cn("rounded border px-1.5 py-0.5 text-[11px]", verdictClass(i.verdict))}>
+      {items.map((i, n) => (
+        <span key={i.label} title={`第 ${n + 1} 名・${tip(i)}`} className={cn("rounded border px-1.5 py-0.5 text-[11px]", verdictClass(i.verdict))}>
+          <span className="mr-1 font-mono font-bold">{n + 1}</span>
           <span className="opacity-80">{VERDICT[i.verdict].label}</span> {i.label}
         </span>
       ))}
@@ -206,12 +210,21 @@ function RoleChips({ items }: { items: Pick[] }) {
 /** 英雄頭像列：外框實線是強判斷、虛線是次級；滑過看戰績、勝率差與貢獻 */
 function ChampIcons({ items }: { items: Pick[] }) {
   if (!items.length) return <span className="text-[11px] text-muted-foreground">—</span>
+  const rest = items.length - CHAMPS_SHOWN
   return (
-    <span className="flex gap-1.5">
-      {items.map((i) => {
+    <span className="flex flex-wrap items-center gap-1.5 gap-y-3">
+      {items.slice(0, CHAMPS_SHOWN).map((i, n) => {
         const pos = VERDICT[i.verdict].side === "pos"
         return (
-          <span key={i.label} title={tip(i)} className="relative shrink-0">
+          <span key={i.label} title={`第 ${n + 1} 名・${tip(i)}`} className="relative shrink-0">
+            <span
+              className={cn(
+                "absolute -left-1 -top-1 z-10 flex size-4 items-center justify-center rounded-full font-mono text-[9px] font-bold ring-1 ring-background",
+                pos ? "bg-win text-background" : "bg-loss text-background",
+              )}
+            >
+              {n + 1}
+            </span>
             <img
               src={iconUrl(i.icon)}
               alt={i.label}
@@ -232,6 +245,11 @@ function ChampIcons({ items }: { items: Pick[] }) {
           </span>
         )
       })}
+      {rest > 0 && (
+        <span className="text-[11px] text-muted-foreground" title="點這一列看完整排名">
+          還有 {rest} 隻
+        </span>
+      )}
     </span>
   )
 }
@@ -243,8 +261,9 @@ function PickList({ title, items, empty }: { title: string; items: Pick[]; empty
       <div className="mb-1 text-[11px] font-semibold text-muted-foreground">{title}</div>
       {items.length ? (
         <div className="space-y-1">
-          {items.map((i) => (
-            <div key={i.label} className="flex items-center gap-2" title={tip(i)}>
+          {items.map((i, n) => (
+            <div key={i.label} data-testid="pick-rank" className="flex items-center gap-2" title={tip(i)}>
+              <span className="w-5 shrink-0 text-right font-mono text-[11px] font-bold tabular-nums text-muted-foreground">{n + 1}</span>
               {i.icon && <img src={iconUrl(i.icon)} alt="" className="size-6 shrink-0 rounded bg-icon-tile" />}
               <span className="min-w-0 flex-1 truncate text-[13px]">{i.label}</span>
               <span className={cn("shrink-0 rounded border px-1.5 text-[11px]", verdictClass(i.verdict))}>{VERDICT[i.verdict].label}</span>
@@ -913,7 +932,7 @@ export function Crew() {
       {/* ── 全員一覽：每人一列，迷你雷達 + 判斷 ── */}
       <Panel
         title="全員一覽"
-        caption={`定位依「終場出裝」判斷（AD 輸出、AD 刺客、AP 輸出、AP 刺客、坦克、AD 鬥士、AP 鬥士、輔助）：AD 刺客是穿甲裝為主，AP 刺客是 AP 輸出裝配上官方定位為刺客的英雄，其餘不看官方定位。雷達是各出裝佔他場次的比例（最常用的頂到外框）。判斷以「貢獻」為主：輸出、承傷、存活、參團、控場（有治療或護盾隊友時再加治療護盾）各自和同類型（出裝定位 × 英雄官方主定位）的人比（不受輸贏影響），依出裝定位加權成隊內貢獻（同類型的中位數＝50）；收縮後高或低 ${CONTRIB_GAP} 分以上才算數。貢獻好是「適合」、差是「不適合」；勝率（和他自己平均比，出裝 ${WR_GAP_ROLE}pp、英雄 ${WR_GAP_CHAMP}pp）只做補充——貢獻好但勝率差是「非戰之罪」、貢獻差但勝率好是「靠隊友」、貢獻普通時才單看勝率（虛線框）。滑過看數字；點一列看完整分析`}
+        caption={`定位依「終場出裝」判斷（AD 輸出、AD 刺客、AP 輸出、AP 刺客、坦克、AD 鬥士、AP 鬥士、輔助）：AD 刺客是穿甲裝為主，AP 刺客是 AP 輸出裝配上官方定位為刺客的英雄，其餘不看官方定位。雷達是各出裝佔他場次的比例（最常用的頂到外框）。判斷以「貢獻」為主：輸出、承傷、存活、參團、控場（有治療或護盾隊友時再加治療護盾）各自和同類型（出裝定位 × 英雄官方主定位）的人比（不受輸贏影響），依出裝定位加權成隊內貢獻（同類型的中位數＝50）；收縮後高或低 ${CONTRIB_GAP} 分以上才算數。貢獻好是「適合」、差是「不適合」；勝率（和他自己平均比，出裝 ${WR_GAP_ROLE}pp、英雄 ${WR_GAP_CHAMP}pp）只做補充——貢獻好但勝率差是「非戰之罪」、貢獻差但勝率好是「靠隊友」、貢獻普通時才單看勝率（虛線框）。每格前面的數字是名次：先依判斷強弱（適合 > 非戰之罪 > 勝率好；不適合 > 靠隊友 > 勝率差），同一級依貢獻差的大小、再依勝率差排。出裝定位全部列出，英雄列前 ${CHAMPS_SHOWN} 名；滑過看數字，點一列看完整排名`}
       >
         {loading ? (
           <Skeleton className="h-[640px] w-full" />

@@ -305,3 +305,33 @@ test("好友比較頁：模式與期間篩選照常套用", async ({ page }) => 
   const myRow = panel(page, "全員一覽").locator("button.slide-in", { hasText: nameOf(me.riot_id) }).first()
   if (Number(r.games) > 0) await expect(myRow).toContainText(`${r.games} 場`)
 })
+
+test("好友比較頁：適合／不適合有名次，不只列三個；抽屜裡是完整排名", async ({ page }) => {
+  await openPage(page, "crew")
+  const rows = panel(page, "全員一覽").locator("button.slide-in")
+  await expect(rows.first()).toBeVisible()
+  // 一覽表：每個人的出裝定位標籤前面是 1、2、3… 連續的名次
+  const n = await rows.count()
+  let maxChips = 0
+  for (let i = 0; i < n; i++) {
+    const sides = rows.nth(i).locator("> span").nth(2).locator("> span")
+    for (let s = 0; s < 2; s++) {
+      const ranks = await sides.nth(s).locator("span.font-mono.font-bold").allInnerTexts()
+      expect(ranks, `第 ${i + 1} 人`).toEqual(ranks.map((_, k) => String(k + 1)))
+      maxChips = Math.max(maxChips, ranks.length)
+    }
+  }
+  // 以前一邊最多三個；現在全部列出，至少有人超過三個（資料量下必然：八種出裝裡判斷得出來的通常不只三種）
+  expect(maxChips).toBeGreaterThan(3)
+  // 抽屜：英雄的完整排名也從 1 連續編號
+  await rows.first().click()
+  const ranked = page.getByTestId("pick-rank")
+  await expect(ranked.first()).toBeVisible()
+  const nums = await ranked.evaluateAll((els) => els.map((e) => (e.firstElementChild as HTMLElement).innerText))
+  // 四份清單（出裝好／壞、英雄好／壞）各自從 1 開始
+  let expected = 0
+  for (const t of nums) {
+    expected = t === "1" ? 1 : expected + 1
+    expect(t).toBe(String(expected))
+  }
+})
