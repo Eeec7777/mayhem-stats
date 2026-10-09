@@ -17,6 +17,7 @@ import { MAX_GAME_IDS, num, type CubeFilter, type CubeRow } from "@/lib/cube"
 import { useFilters } from "@/lib/filters"
 import { useCrumb } from "@/lib/breadcrumb"
 import { WhoSwitch } from "@/components/WhoSwitch"
+import { usePageWho } from "@/lib/whoState"
 import { useWhoScope, type Who } from "@/lib/who"
 import { MIN_GAMES, NO_LIMIT, round0, round1 } from "./shared"
 
@@ -119,7 +120,7 @@ function buildColumns(
 export function Augments() {
   const { addDrill, drills } = useFilters()
   // 看誰的數據（和英雄頁同一個切換列）。之後所有查詢都走 scope.q，不直接用 apply
-  const [who, setWhoState] = useState<Who>("account")
+  const [who, setWhoState] = usePageWho()
   const scope = useWhoScope(who)
   const apply = scope.q
   const [picked, setPicked] = useState<string>(ALL)

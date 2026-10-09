@@ -18,6 +18,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useCube } from "@/hooks/useCube"
 import { MAX_GAME_IDS, num, type CubeFilter } from "@/lib/cube"
 import { useFilters } from "@/lib/filters"
+import { usePageWho } from "@/lib/whoState"
 import { participantRows, useWhoScope, type Who } from "@/lib/who"
 import { WhoSwitch } from "@/components/WhoSwitch"
 import { useCrumb } from "@/lib/breadcrumb"
@@ -97,7 +98,7 @@ function PersonTimes({ rows }: { rows: PersonRow[] }) {
 
 export function TimeAnalysis() {
   const { players } = useFilters()
-  const [who, setWhoState] = useState<Who>("account")
+  const [who, setWhoState] = usePageWho(NO_ALL)
   const scope = useWhoScope(who)
   const apply = scope.q
   const [slice, setSlice] = useState<Slice | null>(null)

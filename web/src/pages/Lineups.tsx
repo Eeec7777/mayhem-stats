@@ -7,6 +7,7 @@ import { WhoSwitch } from "@/components/WhoSwitch"
 import { useCube } from "@/hooks/useCube"
 import { num, type CubeFilter, type CubeRow } from "@/lib/cube"
 import { useCrumb } from "@/lib/breadcrumb"
+import { usePageWho } from "@/lib/whoState"
 import { useWhoScope, type Who } from "@/lib/who"
 import { cn } from "@/lib/utils"
 
@@ -242,7 +243,7 @@ function Matrix({
 }
 
 export function Lineups() {
-  const [who, setWhoState] = useState<Who>("account")
+  const [who, setWhoState] = usePageWho()
   const scope = useWhoScope(who)
   const apply = scope.q
   const [facet, setFacet] = useState<FacetId>("front")

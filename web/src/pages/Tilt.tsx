@@ -8,6 +8,7 @@ import { useCube } from "@/hooks/useCube"
 import { MAX_GAME_IDS, num, type CubeRow } from "@/lib/cube"
 import { useFilters } from "@/lib/filters"
 import { useCrumb } from "@/lib/breadcrumb"
+import { usePageWho } from "@/lib/whoState"
 import { participantRows, useWhoScope, type Who } from "@/lib/who"
 import { cn } from "@/lib/utils"
 import { DrillPanel } from "@/components/MatchList"
@@ -132,7 +133,7 @@ const NO_ALL = { all: "路人在資料庫裡只有碰到你的那幾場，沒有
 
 export function Tilt() {
   const { players } = useFilters()
-  const [who, setWhoState] = useState<Who>("account")
+  const [who, setWhoState] = usePageWho(NO_ALL)
   const scope = useWhoScope(who)
   const apply = scope.q
   const [focus, setFocus] = useState<TiltFocus | null>(null)

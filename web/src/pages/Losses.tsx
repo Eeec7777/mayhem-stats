@@ -10,6 +10,7 @@ import { ContrastCell, numOf } from "@/components/cells"
 import { useFilters } from "@/lib/filters"
 import { useCrumb } from "@/lib/breadcrumb"
 import { WhoSwitch } from "@/components/WhoSwitch"
+import { usePageWho } from "@/lib/whoState"
 import { useWhoScope, type Who } from "@/lib/who"
 
 /** 拿來做勝負對照的指標。higherIsBetter 只影響顏色，不影響數字。 */
@@ -118,7 +119,7 @@ const columnsFor = (showRef: boolean): GridColumn[] => [
 
 export function Losses() {
   const { apply: applyAccount } = useFilters()
-  const [who, setWhoState] = useState<Who>("account")
+  const [who, setWhoState] = usePageWho()
   const scope = useWhoScope(who)
   const apply = scope.q
   const [bucket, setBucket] = useState<string | null>(null)

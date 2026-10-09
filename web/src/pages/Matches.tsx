@@ -6,7 +6,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { EmptyState, Panel } from "@/components/primitives"
 import { WhoSwitch } from "@/components/WhoSwitch"
 import { useCube } from "@/hooks/useCube"
-import { useWhoScope, type Who, type WhoScope } from "@/lib/who"
+import { usePageWho } from "@/lib/whoState"
+import { useWhoScope, type WhoScope } from "@/lib/who"
 import { MAX_GAME_IDS, iconUrl, num, type CubeRow } from "@/lib/cube"
 import { NO_LIMIT } from "./shared"
 import { useFilters } from "@/lib/filters"
@@ -760,7 +761,7 @@ function TrackedMatches({ scope }: { scope: WhoScope }) {
 
 export function Matches() {
   const { account, matchParams, drills, apply } = useFilters()
-  const [who, setWho] = useState<Who>("account")
+  const [who, setWho] = usePageWho(NO_ALL)
   const scope = useWhoScope(who)
   // 帳號、模式、期間：和其他頁同一組全域條件（原本漏了期間，選「最近 7 天」仍列出全部場次）
   const params = matchParams()

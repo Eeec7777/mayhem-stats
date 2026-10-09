@@ -20,6 +20,7 @@ import { MIN_GAMES, NO_LIMIT, round0, round1, round2 } from "./shared"
 import { ROLE_SPEC, type RoleSpec } from "@/lib/roleBasis"
 import { RoleChip } from "@/components/RoleChip"
 import { WhoSwitch } from "@/components/WhoSwitch"
+import { usePageWho } from "@/lib/whoState"
 import { WHO_LABEL, useWhoScope, type Who, type WhoScope } from "@/lib/who"
 
 const WhoContext = createContext<WhoScope | null>(null)
@@ -522,7 +523,7 @@ function RoleRadar({
 }
 
 export function Champions() {
-  const [who, setWhoState] = useState<Who>("account")
+  const [who, setWhoState] = usePageWho()
   const scope = useWhoScope(who)
   return (
     <WhoContext.Provider value={scope}>
