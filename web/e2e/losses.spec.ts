@@ -1,11 +1,11 @@
 import type { Page } from "@playwright/test"
 import { test, expect } from "./fixtures"
-import { charts, clickBar, gridColumn, gridRows, openPage, readCsv, visibleBars } from "./helpers"
+import { gridColumn, gridRows, openPage, readCsv } from "./helpers"
 import { mePuuid, sql } from "./db"
 
 const crumbs = (page: Page) => page.locator('nav[aria-label="目前位置"]')
 const card = (page: Page, title: string) => page.locator('[data-slot="card"]', { has: page.getByText(title, { exact: true }) }).first()
-const bucketOf = (s: number) => (s < 720 ? "< 12 分" : s < 840 ? "12-14 分" : s < 960 ? "14-16 分" : s < 1080 ? "16-18 分" : s < 1200 ? "18-20 分" : s < 1320 ? "20-22 分" : "22 分以上")
+const bucketOf = (s: number) => (s < 480 ? "< 8:00（重開）" : s < 820 ? "8:00-13:40" : s < 940 ? "13:40-15:40" : s < 1030 ? "15:40-17:10" : s < 1120 ? "17:10-18:40" : s < 1260 ? "18:40-21:00" : "21:00 以上")
 
 /** 勝局／敗局各自的平均（先各自平均再相除的指標由呼叫端組合）。 */
 const byResult = () => {
@@ -101,41 +101,50 @@ test.describe("敗因分析頁：勝局 vs 敗局", () => {
 test.describe("敗因分析頁：對局長度與勝率", () => {
   test.beforeEach(async ({ page }) => {
     await openPage(page, "losses")
+    await expect(card(page, "對局長度與勝率").getByTestId("gap-row").first()).toBeVisible()
   })
 
-  const chart = (page: Page) => charts(card(page, "對局長度與勝率")).first()
+  const rowsOf = (page: Page) => card(page, "對局長度與勝率").getByTestId("gap-row")
+  const rowOf = (page: Page, label: string) => rowsOf(page).filter({ has: page.getByText(label, { exact: true }) })
   const games = () =>
     sql(
       `SELECT m.game_duration AS dur, p.win FROM match_participants p JOIN matches m USING (platform_id, game_id) WHERE p.puuid = ? AND m.queue_id = 2400`,
       [mePuuid()],
     ).map((r) => ({ b: bucketOf(Number(r.dur)), win: Number(r.win) }))
+  const ORDER = ["< 8:00（重開）", "8:00-13:40", "13:40-15:40", "15:40-17:10", "17:10-18:40", "18:40-21:00", "21:00 以上"]
 
-  test("七個長度分組（每 2 分鐘一段）由短到長，勝率和 SQL 一致", async ({ page }) => {
-    const bars = await visibleBars(chart(page))
-    // 橫向長條圖的第一個類別畫在最下面，所以 yAxis.data 是反過來的；由上到下讀才是短 → 長
-    const labels = bars.map((b) => b.label).reverse()
-    const order = ["< 12 分", "12-14 分", "14-16 分", "16-18 分", "18-20 分", "20-22 分", "22 分以上"]
-    expect(labels).toEqual(order.filter((o) => labels.includes(o)))
-    for (const b of bars) {
-      const g = games().filter((x) => x.b === b.label)
-      expect(b.value, b.label).toBeCloseTo((g.reduce((a, x) => a + x.win, 0) / g.length) * 100, 1)
+  test("分組由短到長；每一列的場次與勝場和獨立 SQL 一致", async ({ page }) => {
+    const mine = games()
+    const present = ORDER.filter((o) => mine.some((g) => g.b === o))
+    const labels = await rowsOf(page).evaluateAll((els) => els.map((e) => e.getAttribute("aria-label")!.split("：")[0]))
+    expect(labels).toEqual(present)
+    for (const label of present) {
+      const g = mine.filter((x) => x.b === label)
+      await expect(rowOf(page, label), label).toHaveAttribute("data-games", String(g.length))
+      await expect(rowOf(page, label), label).toHaveAttribute("data-wins", String(g.reduce((a, x) => a + x.win, 0)))
     }
   })
 
-  test("點一根 → 「對局長度 X 的每一場」，場次數一致、麵包屑多一層；再點取消", async ({ page }) => {
-    const pick = (await visibleBars(chart(page))).filter((b) => b.value > 8)[0]
-    const n = games().filter((x) => x.b === pick.label).length
-    await clickBar(page, chart(page), pick.label)
-    await expect(card(page, `對局長度 ${pick.label} 的每一場`).getByText(`共 ${n} 場`)).toBeVisible()
-    await expect(crumbs(page)).toContainText(`對局長度 ${pick.label}`)
-    await clickBar(page, chart(page), pick.label)
+  test("說明寫出切法依據；最上面一句寫出看得出差別的段（或寫明目前沒有）", async ({ page }) => {
+    const panel = card(page, "對局長度與勝率")
+    await expect(panel.getByText(/8:00 是最早能投降的時間/)).toBeVisible()
+    await expect(panel.getByText(/13:40 是統計上唯一站得住腳的轉折/)).toBeVisible()
+    await expect(panel.getByText(/^看得出差別的：|^目前沒有哪一段長度看得出差別/)).toBeVisible()
+  })
+
+  test("點一列 → 「對局長度 X 的每一場」，場次數一致、麵包屑多一層、列亮起；再點取消", async ({ page }) => {
+    const [label, n] = ORDER.map((o) => [o, games().filter((x) => x.b === o).length] as const).sort((a, b) => b[1] - a[1])[0]
+    await rowOf(page, label).click()
+    await expect(card(page, `對局長度 ${label} 的每一場`).getByText(`共 ${n} 場`)).toBeVisible()
+    await expect(crumbs(page)).toContainText(`對局長度 ${label}`)
+    await expect(rowOf(page, label)).toHaveClass(/ring-primary/)
+    await rowOf(page, label).click()
     await expect(crumbs(page)).toHaveCount(0)
   })
 
   test("收起鈕關掉列表", async ({ page }) => {
-    const pick = (await visibleBars(chart(page))).filter((b) => b.value > 8)[0]
-    await clickBar(page, chart(page), pick.label)
-    await card(page, `對局長度 ${pick.label} 的每一場`).getByRole("button", { name: "收起" }).click()
+    await rowOf(page, "13:40-15:40").click()
+    await card(page, "對局長度 13:40-15:40 的每一場").getByRole("button", { name: "收起" }).click()
     await expect(crumbs(page)).toHaveCount(0)
   })
 })
@@ -208,18 +217,16 @@ test.describe("敗因分析頁：看誰的數據", () => {
     expect(csv.slice(1).some((x) => x[iLabel] === "我的擊殺")).toBe(false)
     const crew = byResultOf("crew")
     expect(Number(csv.slice(1).find((x) => x[iLabel] === "擊殺")![iDiff])).toBeCloseTo(diffPct(crew, "k"), 3)
-    // 對局長度下鑽：場次 = 圖上那一格的場數（每位追蹤對象每場一列）
-    const chart = charts(card(page, "對局長度與勝率")).first()
-    const pick = (await visibleBars(chart)).filter((b) => b.value > 0)[0]
+    // 對局長度下鑽：場次 = 圖上那一列的場數（每位追蹤對象每場一列）
+    const label = "13:40-15:40"
     const n = sql(
       `SELECT COUNT(*) n FROM match_participants p JOIN matches m USING (platform_id, game_id)
         WHERE m.queue_id = 2400 AND p.puuid IN (SELECT puuid FROM accounts WHERE is_me = 1 OR tracked = 1)
-          AND (CASE WHEN m.game_duration < 720 THEN '< 12 分' WHEN m.game_duration < 840 THEN '12-14 分'
-                    WHEN m.game_duration < 960 THEN '14-16 分' WHEN m.game_duration < 1080 THEN '16-18 分'
-                    WHEN m.game_duration < 1200 THEN '18-20 分' WHEN m.game_duration < 1320 THEN '20-22 分' ELSE '22 分以上' END) = ?`,
-      [pick.label],
+          AND m.game_duration >= 820 AND m.game_duration < 940`,
     )[0].n
-    await clickBar(page, chart, pick.label)
-    await expect(card(page, `對局長度 ${pick.label} 的每一場`).getByText(`共 ${n} 場`)).toBeVisible()
+    const row = card(page, "對局長度與勝率").getByTestId("gap-row").filter({ has: page.getByText(label, { exact: true }) })
+    await expect(row).toHaveAttribute("data-games", String(n))
+    await row.click()
+    await expect(card(page, `對局長度 ${label} 的每一場`).getByText(`共 ${n} 場`)).toBeVisible()
   })
 })

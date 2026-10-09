@@ -3,7 +3,8 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { DrillPanel, MAX_GAME_IDS } from "@/components/MatchList"
 import { Kpi, Panel, EmptyState, QueryError } from "@/components/primitives"
 import { AgTable, type GridColumn } from "@/components/AgTable"
-import { BarChart, type BarDatum } from "@/components/charts"
+import { GapForest, Findings } from "@/components/GapForest"
+import { gapOf, reachOf, type GapRow } from "@/lib/gap"
 import { useCube } from "@/hooks/useCube"
 import { num } from "@/lib/cube"
 import { ContrastCell, numOf } from "@/components/cells"
@@ -152,7 +153,7 @@ export function Losses() {
     who === "all"
       ? null
       : apply({
-          measures: ["participants.games", "participants.winrate"],
+          measures: ["participants.games", "participants.wins"],
           dimensions: ["matches.duration_bucket"],
           limit: 10,
         }),
@@ -185,15 +186,24 @@ export function Losses() {
   })
   const columns = useMemo(() => columnsFor(who !== "all"), [who])
 
-  // 依分組的下界由短到長排。Cube 回傳的順序不固定（實測「15-20、< 15、20-25」，現在的分組是「12-14、< 12、14-16…」）
+  // 依分組的下界由短到長排。Cube 回傳的順序不固定；標籤是遊戲內時鐘（「8:00-13:40」「< 8:00（重開）」「21:00 以上」）
   const bucketStart = (label: string) => (label.startsWith("<") ? 0 : Number(label.match(/\d+/)?.[0] ?? 999))
-  const durationBars: BarDatum[] = byDuration.rows
-    .map((r) => ({
-      label: String(r["matches.duration_bucket"] ?? "—"),
-      value: num(r["participants.winrate"]) ?? 0,
-      games: num(r["participants.games"]) ?? 0,
-    }))
+  const durationRows: GapRow[] = byDuration.rows
+    .map((r) => {
+      const label = String(r["matches.duration_bucket"] ?? "—")
+      return { key: label, label, games: num(r["participants.games"]) ?? 0, wins: num(r["participants.wins"]) ?? 0 }
+    })
     .sort((a, b) => bucketStart(a.label) - bucketStart(b.label))
+  // 比的是這個條件下的整體勝率；重開那一組不是正常對局，不拿來下判斷
+  const overallWr = total ? (100 * winGames) / total : null
+  const durationFindings =
+    overallWr === null
+      ? []
+      : durationRows
+          .filter((r) => !r.label.startsWith("<"))
+          .map((r) => ({ r, g: gapOf(r, overallWr) }))
+          .filter((x) => x.g.clear)
+          .map((x) => ({ label: x.r.label, diff: x.g.diff }))
 
   const teamDpmWin = num(win?.["participants.team_dpm"])
   const teamDpmLoss = num(loss?.["participants.team_dpm"])
@@ -289,19 +299,26 @@ export function Losses() {
       {who !== "all" && (
       <Panel
         title="對局長度與勝率"
-        caption="和上面的「平均局長」是同一件事的分組版，每 2 分鐘一段（大亂鬥多半在 12～22 分鐘內結束，分太粗會把轉折蓋掉）。注意因果方向：贏的時候通常推得快，所以短局勝率高多半是結果、不是原因。點一根看那些場次"
+        caption={`每一列是一段對局長度（遊戲內時鐘），點是那段的勝率比整體 ${overallWr === null ? "—" : `${overallWr.toFixed(1)}%`} 高或低幾個百分點，線是 95% 區間，區間整段在整體同一邊才上色。切法：8:00 是最早能投降的時間，之前是重開或斷線、不算正常對局；13:40 是統計上唯一站得住腳的轉折；其餘依場數等分，邊界只看長度、不看勝負（方法與數字見 docs/duration-bucketing.md）。${
+          who === "account" ? "" : "追蹤對象的每位玩家每場各算一次，同場多人會重複，區間比實際窄。"
+        }注意因果方向：贏的時候通常推得快，所以短局勝率高多半是結果、不是原因。點一列看那些場次`}
       >
-        {byDuration.loading ? (
-          <Skeleton className="h-[220px] w-full" />
+        {byDuration.loading || overallWr === null ? (
+          <Skeleton className="h-[260px] w-full" />
         ) : byDuration.error ? (
           <QueryError error={byDuration.error} />
-        ) : durationBars.length ? (
-          <BarChart
-            data={durationBars}
-            suffix="%"
-            selected={bucket}
-            onPick={(label) => setBucket((cur) => (cur === label ? null : label))}
-          />
+        ) : durationRows.length ? (
+          <div className="reveal space-y-3">
+            <Findings items={durationFindings} empty="目前沒有哪一段長度看得出差別：差距都還在樣本誤差內。" />
+            <GapForest
+              rows={durationRows}
+              baseline={overallWr}
+              reach={reachOf(durationRows, overallWr)}
+              selected={bucket}
+              labelWidth="minmax(0,9rem)"
+              onPick={(row) => setBucket((cur) => (cur === row.key ? null : row.key))}
+            />
+          </div>
         ) : (
           <EmptyState>還沒有資料。</EmptyState>
         )}

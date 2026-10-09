@@ -153,13 +153,13 @@ cubes:
       - name: duration_bucket
         title: 對局長度
         sql: >
-          CASE WHEN {CUBE}.game_duration < 720 THEN '< 12 分'
-               WHEN {CUBE}.game_duration < 840 THEN '12-14 分'
-               WHEN {CUBE}.game_duration < 960 THEN '14-16 分'
-               WHEN {CUBE}.game_duration < 1080 THEN '16-18 分'
-               WHEN {CUBE}.game_duration < 1200 THEN '18-20 分'
-               WHEN {CUBE}.game_duration < 1320 THEN '20-22 分'
-               ELSE '22 分以上' END
+          CASE WHEN {CUBE}.game_duration < 480 THEN '< 8:00（重開）'
+               WHEN {CUBE}.game_duration < 820 THEN '8:00-13:40'
+               WHEN {CUBE}.game_duration < 940 THEN '13:40-15:40'
+               WHEN {CUBE}.game_duration < 1030 THEN '15:40-17:10'
+               WHEN {CUBE}.game_duration < 1120 THEN '17:10-18:40'
+               WHEN {CUBE}.game_duration < 1260 THEN '18:40-21:00'
+               ELSE '21:00 以上' END
         type: string
         meta: { group: 對局 }
 

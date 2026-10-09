@@ -3,7 +3,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Skeleton } from "@/components/ui/skeleton"
 import { EmptyState, Panel } from "@/components/primitives"
 import { DrillPanel, MAX_GAME_IDS } from "@/components/MatchList"
-import { GapForest } from "@/components/GapForest"
+import { GapForest, Findings } from "@/components/GapForest"
 import { gapOf, reachOf, type GapRow } from "@/lib/gap"
 import { WhoSwitch } from "@/components/WhoSwitch"
 import { useCube } from "@/hooks/useCube"
@@ -257,25 +257,6 @@ type BuildContextId = keyof typeof BUILD_CONTEXTS
 
 /** 一邊（我方或敵方）的三種因素，各自是一組森林圖的列 */
 const SIDE_FACETS: FacetId[] = ["front", "mix", "support"]
-
-/** 看得出差別的組，寫成一句話放在面板最上面：使用者先知道「所以呢」，再看圖 */
-function Findings({ items, empty }: { items: { label: string; diff: number }[]; empty: string }) {
-  if (!items.length) return <p className="text-sm text-muted-foreground">{empty}</p>
-  return (
-    <p className="text-sm">
-      看得出差別的：
-      {items.map((x, i) => (
-        <span key={x.label}>
-          {i > 0 && "、"}
-          <b className={x.diff > 0 ? "text-win" : "text-loss"}>
-            {x.label} {x.diff > 0 ? "+" : ""}
-            {x.diff.toFixed(0)}pp
-          </b>
-        </span>
-      ))}
-    </p>
-  )
-}
 
 export function Lineups() {
   const [who, setWhoState] = usePageWho()

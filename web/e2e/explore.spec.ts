@@ -407,7 +407,7 @@ test.describe("自由探索：交叉矩陣", () => {
   })
 
   test("預設「英雄 × 對局長度」，格子勝率（%）與場次和 SQL 逐格一致", async ({ page }) => {
-    const bucketOf = (s: number) => (s < 720 ? "< 12 分" : s < 840 ? "12-14 分" : s < 960 ? "14-16 分" : s < 1080 ? "16-18 分" : s < 1200 ? "18-20 分" : s < 1320 ? "20-22 分" : "22 分以上")
+    const bucketOf = (s: number) => (s < 480 ? "< 8:00（重開）" : s < 820 ? "8:00-13:40" : s < 940 ? "13:40-15:40" : s < 1030 ? "15:40-17:10" : s < 1120 ? "17:10-18:40" : s < 1260 ? "18:40-21:00" : "21:00 以上")
     const cells = new Map<string, { n: number; w: number }>()
     for (const r of sql(
       `SELECT d.name, m.game_duration dur, p.win FROM match_participants p JOIN matches m USING (platform_id, game_id) JOIN dim_champions d ON d.id = p.champion_id

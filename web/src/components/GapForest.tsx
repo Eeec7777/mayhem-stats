@@ -111,3 +111,22 @@ export function GapForest({
     </div>
   )
 }
+
+/** 看得出差別的組，寫成一句話放在面板最上面：使用者先知道「所以呢」，再看圖 */
+export function Findings({ items, empty }: { items: { label: string; diff: number }[]; empty: string }) {
+  if (!items.length) return <p className="text-sm text-muted-foreground">{empty}</p>
+  return (
+    <p className="text-sm">
+      看得出差別的：
+      {items.map((x, i) => (
+        <span key={x.label}>
+          {i > 0 && "、"}
+          <b className={x.diff > 0 ? "text-win" : "text-loss"}>
+            {x.label} {x.diff > 0 ? "+" : ""}
+            {x.diff.toFixed(0)}pp
+          </b>
+        </span>
+      ))}
+    </p>
+  )
+}

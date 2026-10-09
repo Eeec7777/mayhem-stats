@@ -94,17 +94,17 @@ cubes:
 
       - name: duration_bucket
         title: 對局長度
-        description: "對局長度分組，每 2 分鐘一段：< 12 分、12-14 分、14-16 分、16-18 分、18-20 分、20-22 分、22 分以上。界線依資料分布訂（Mayhem 對局中位數約 17 分、八成落在 12～22 分），大亂鬥很少打過 25 分，所以不再有「25 分以上」；12-14 分與 14-16 分的勝率差很多（約 68% 對 46%），粗分組會把這個轉折蓋掉。"
+        description: "對局長度分組（遊戲內時鐘 mm:ss）：< 8:00（重開）、8:00-13:40、13:40-15:40、15:40-17:10、17:10-18:40、18:40-21:00、21:00 以上。界線有依據：8:00 是最早能投降的時間，之前的對局是重開或斷線，不是正常對局；13:40 是統計上唯一站得住腳的勝率轉折（13:40 以前約 68%、以後約 46%）；其餘各段依場數等分（約各 1/6），邊界只看長度、不看勝負。方法與數字見 docs/duration-bucketing.md。"
         meta:
           group: 對局
         sql: >
-          CASE WHEN {CUBE}.game_duration < 720 THEN '< 12 分'
-               WHEN {CUBE}.game_duration < 840 THEN '12-14 分'
-               WHEN {CUBE}.game_duration < 960 THEN '14-16 分'
-               WHEN {CUBE}.game_duration < 1080 THEN '16-18 分'
-               WHEN {CUBE}.game_duration < 1200 THEN '18-20 分'
-               WHEN {CUBE}.game_duration < 1320 THEN '20-22 分'
-               ELSE '22 分以上' END
+          CASE WHEN {CUBE}.game_duration < 480 THEN '< 8:00（重開）'
+               WHEN {CUBE}.game_duration < 820 THEN '8:00-13:40'
+               WHEN {CUBE}.game_duration < 940 THEN '13:40-15:40'
+               WHEN {CUBE}.game_duration < 1030 THEN '15:40-17:10'
+               WHEN {CUBE}.game_duration < 1120 THEN '17:10-18:40'
+               WHEN {CUBE}.game_duration < 1260 THEN '18:40-21:00'
+               ELSE '21:00 以上' END
         type: string
 
       - name: ended_surrender
