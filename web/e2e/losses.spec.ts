@@ -127,6 +127,7 @@ test.describe("敗因分析頁：對局長度與勝率", () => {
 
   test("說明寫出切法依據；最上面一句寫出看得出差別的段（或寫明目前沒有）", async ({ page }) => {
     const panel = card(page, "對局長度與勝率")
+    await panel.getByText("這幾段怎麼切的、怎麼讀").click()
     await expect(panel.getByText(/8:00 是最早能投降的時間/)).toBeVisible()
     await expect(panel.getByText(/13:40 是統計上唯一站得住腳的轉折/)).toBeVisible()
     await expect(panel.getByText(/^看得出差別的：|^目前沒有哪一段長度看得出差別/)).toBeVisible()

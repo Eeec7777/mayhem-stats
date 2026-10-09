@@ -3,7 +3,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Skeleton } from "@/components/ui/skeleton"
 import { EmptyState, Panel } from "@/components/primitives"
 import { DrillPanel, MAX_GAME_IDS } from "@/components/MatchList"
-import { GapForest, Findings } from "@/components/GapForest"
+import { GapForest, Findings, ForestLegend } from "@/components/GapForest"
 import { gapOf, reachOf, type GapRow } from "@/lib/gap"
 import { WhoSwitch } from "@/components/WhoSwitch"
 import { useCube } from "@/hooks/useCube"
@@ -392,7 +392,7 @@ export function Lineups() {
         <>
           <Panel
             title="什麼陣容比較會贏"
-            caption={`每一列是一種陣容，點是那種陣容的勝率比整體 ${baseline === null ? "—" : `${baseline.toFixed(1)}%`} 高或低幾個百分點，線是 95% 區間。只有區間整段在整體的同一邊才上色，灰色代表還分不出是陣容還是運氣。${
+            caption={`每一列是一種陣容：點是那種陣容的勝率比整體 ${baseline === null ? "—" : `${baseline.toFixed(1)}%`} 高或低幾個百分點，線是 95% 區間。${
               who === "account" ? "" : "一隊只算一次（同隊好幾位追蹤對象也是一隊）。"
             }${who === "all" ? "所有人模式下兩隊都算，敵方就是我方的鏡像，所以只畫一邊。" : ""}點一列看那些場次`}
           >
@@ -403,6 +403,7 @@ export function Lineups() {
             ) : (
               <div className="reveal space-y-4">
                 <Findings items={sideFindings} empty="目前沒有任何一種陣容看得出差別：差距都還在樣本誤差內，再累積一些場次再看。" />
+                <ForestLegend />
                 <div className={cn("grid gap-x-8 gap-y-4", sides.length > 1 && "lg:grid-cols-2")}>
                   {sides.map((s) => (
                     <div key={s} className="space-y-2">
@@ -447,6 +448,7 @@ export function Lineups() {
             ) : (
               <div className="reveal space-y-3">
                 <Findings items={buildFindings} empty="這種分組下還沒有看得出差別的出裝。" />
+                <ForestLegend better={`比${who === "account" ? "你" : ""}整體好`} worse={`比${who === "account" ? "你" : ""}整體差`} />
                 <div className={cn("grid gap-x-8 gap-y-4 md:grid-cols-2", ctx.buckets.length === 3 ? "lg:grid-cols-3" : "xl:grid-cols-4")}>
                   {ctx.buckets.map((b) => {
                     const rows = buildRows(b)
@@ -457,7 +459,7 @@ export function Lineups() {
                           {ctx.name(b)}
                           <span className="font-mono text-[11px] font-normal text-muted-foreground">{n} 場</span>
                         </div>
-                        <GapForest rows={rows} baseline={playerBase} reach={buildReach} selected={focus?.key} onPick={pickBuild(b)} labelWidth="4.5rem" />
+                        <GapForest rows={rows} baseline={playerBase} reach={buildReach} selected={focus?.key} onPick={pickBuild(b)} labelWidth="4.5rem" compact />
                       </div>
                     )
                   })}

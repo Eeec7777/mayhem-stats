@@ -11,6 +11,7 @@ import { useCrumb } from "@/lib/breadcrumb"
 import { usePageWho } from "@/lib/whoState"
 import { participantRows, useWhoScope, type Who } from "@/lib/who"
 import { cn } from "@/lib/utils"
+import { ForestAxis, ForestLegend, ForestTrack } from "@/components/GapForest"
 import { DrillPanel } from "@/components/MatchList"
 import { MIN_GAMES, NO_LIMIT, splitRiotId } from "./shared"
 
@@ -67,11 +68,11 @@ function ForestPlot({ people, pooled }: { people: Person[]; pooled: Person }) {
     60,
     Math.max(20, Math.ceil(Math.max(0, ...drawn.flatMap((p) => [Math.abs(p.interval![0]), Math.abs(p.interval![1])])) / 10) * 10),
   )
-  const at = (v: number) => `${((Math.max(-reach, Math.min(reach, v)) + reach) / (2 * reach)) * 100}%`
+  // 手機寬度：名字與軌道、落差；明細文字（輸後／贏後勝率）沒位置，放到下一行
+  const gridCls = "grid-cols-[minmax(0,7rem)_minmax(6rem,1fr)_4.5rem] sm:grid-cols-[minmax(0,10rem)_minmax(14rem,1fr)_4.5rem_12rem]"
 
   const row = (p: Person, bold = false) => {
     const clear = isClear(p.interval)
-    const tone = !clear ? "bg-muted-foreground" : p.delta! < 0 ? "bg-loss" : "bg-win"
     return (
       <div
         key={p.key}
@@ -81,47 +82,41 @@ function ForestPlot({ people, pooled }: { people: Person[]; pooled: Person }) {
             ? `${p.name}：落差 ${p.delta!.toFixed(1)} pp，95% 區間 ${p.interval[0].toFixed(0)} 到 ${p.interval[1].toFixed(0)}`
             : `${p.name}：樣本太少`
         }
-        className="grid grid-cols-[minmax(0,8rem)_minmax(0,1fr)] items-center gap-x-3 gap-y-0.5 py-1.5 sm:grid-cols-[minmax(0,10rem)_minmax(0,1fr)_minmax(0,19rem)]"
+        className={cn("grid items-center gap-x-2 border-b border-border/50 last:border-b-0", gridCls, !p.interval && "opacity-70")}
       >
-        <span className={cn("flex min-w-0 items-baseline gap-1 text-sm", bold ? "font-semibold" : "font-medium")}>
+        <span className={cn("flex min-w-0 items-baseline gap-1 pl-1 text-[13px]", bold ? "font-semibold" : "font-medium")}>
           <span className="truncate">{p.name}</span>
           {p.tag && <span className="shrink-0 text-[11px] font-normal text-muted-foreground">{p.tag}</span>}
         </span>
-        {p.interval ? (
-          <div className="relative h-5">
-            <span className="absolute inset-y-0 left-1/2 w-px bg-muted-foreground/40" />
-            <span
-              className={cn("absolute top-1/2 h-0.5 -translate-y-1/2 rounded-full", tone, !clear && "opacity-70")}
-              style={{ left: at(p.interval[0]), width: `calc(${at(p.interval[1])} - ${at(p.interval[0])})` }}
-            />
-            <span
-              className={cn("absolute top-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full ring-2 ring-card", tone)}
-              style={{ left: at(p.delta!) }}
-            />
-          </div>
-        ) : (
-          <span className="text-xs text-muted-foreground">樣本太少，輸後 {p.loss.g} 場・贏後 {p.win.g} 場</span>
-        )}
-        <span className="col-span-2 font-mono text-[11px] tabular-nums text-muted-foreground sm:col-span-1">
-          {p.delta === null ? "—" : <b className={cn("text-xs", clear ? (p.delta < 0 ? "text-loss" : "text-win") : "text-foreground")}>{p.delta > 0 ? "+" : ""}{p.delta.toFixed(1)} pp</b>}
-          {"  "}輸後 {pctOf(p.loss)}（{p.loss.g}）・贏後 {pctOf(p.win)}（{p.win.g}）
+        <ForestTrack diff={p.delta} interval={p.interval} clear={clear} reach={reach} empty={`樣本太少（輸後 ${p.loss.g}・贏後 ${p.win.g} 場）`} />
+        <span
+          className={cn(
+            "text-right font-mono text-[13px] font-semibold tabular-nums",
+            p.delta === null ? "text-muted-foreground" : clear ? (p.delta < 0 ? "text-loss" : "text-win") : "text-foreground",
+          )}
+        >
+          {p.delta === null ? "—" : `${p.delta > 0 ? "+" : ""}${p.delta.toFixed(1)} pp`}
+        </span>
+        <span className="col-span-3 pb-1 pl-1 font-mono text-[11px] tabular-nums text-muted-foreground sm:col-span-1 sm:p-0">
+          輸後 {pctOf(p.loss)}（{p.loss.g}）・贏後 {pctOf(p.win)}（{p.win.g}）
         </span>
       </div>
     )
   }
 
   return (
-    <div>
-      <div className="mb-1 grid grid-cols-[minmax(0,8rem)_minmax(0,1fr)] gap-x-3 text-[11px] text-muted-foreground sm:grid-cols-[minmax(0,10rem)_minmax(0,1fr)_minmax(0,19rem)]">
-        <span />
-        <div className="flex justify-between font-mono tabular-nums">
-          <span>← 更差 {-reach}</span>
-          <span>0</span>
-          <span>+{reach} 更好 →</span>
+    <div className="max-w-[60rem] space-y-2">
+      <ForestLegend better="輸之後反而更好" worse="輸之後更差" />
+      <div>
+        <div className={cn("grid items-end gap-x-2", gridCls)}>
+          <span />
+          <ForestAxis reach={reach} center="0（輸後＝贏後）" worse="輸之後更差" better="輸之後更好" />
+          <span className="pb-0.5 text-right text-[10px] text-muted-foreground">落差</span>
+          <span className="hidden pb-0.5 text-[10px] text-muted-foreground sm:block">輸後勝率・贏後勝率（場次）</span>
         </div>
+        {people.map((p) => row(p))}
+        <div className="mt-1 border-t-2 border-border pt-1">{row(pooled, true)}</div>
       </div>
-      <div className="divide-y">{people.map((p) => row(p))}</div>
-      <div className="mt-1 border-t-2 pt-1">{row(pooled, true)}</div>
     </div>
   )
 }
@@ -282,7 +277,7 @@ export function Tilt() {
       {who === "tracked" && (
         <Panel
           title="每個人的落差"
-          caption={`點是「前一場輸之後的勝率 − 前一場贏之後的勝率」，線是 95% 區間（往左是輸之後更差、往右是更好），只有區間不跨 0 才上色；輸後或贏後不到 ${MIN_GAMES} 場的人不畫。最下面「合併」是把大家的場次加在一起，被打得最多場的人拉著走，而且追蹤對象常常同隊，同一場被每個人各算一次、區間比實際窄——以逐人為準`}
+          caption="每人一列：點是「前一場輸之後的勝率 − 前一場贏之後的勝率」，線是 95% 區間；區間跨過 0 就分不出是心態還是運氣，畫成灰色。最下面「合併」會被打最多場的人拉著走，而且同場被重複算、區間比實際窄，以逐人為準"
         >
           {byPerson.loading ? (
             <Skeleton className="h-[240px] w-full" />

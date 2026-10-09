@@ -5,8 +5,8 @@ import { PAGE_LABEL, charts, openPage, sweepHover, type PageId } from "./helpers
 // （zrender 解析 oklch 失敗就是這樣，見 ui-conventions）或「窄螢幕橫向溢出」這類跨頁面的退化。
 
 const PAGES = Object.keys(PAGE_LABEL) as PageId[]
-// 陣容頁改成 HTML 的勝率差森林圖（2026-10），不再有 ECharts
-const CHART_PAGES: PageId[] = ["dashboard", "champions", "augments", "players", "time", "tilt", "losses"]
+// 陣容頁與敗因分析頁的對局長度改成 HTML 的勝率差森林圖（2026-10），不再有 ECharts
+const CHART_PAGES: PageId[] = ["dashboard", "champions", "augments", "players", "time", "tilt"]
 const THEMES = [
   ["neon", "霓虹"], ["matrix", "終端"], ["lava", "熔岩"], ["violet", "紫電"],
   ["daylight", "晨光"], ["mint", "薄荷"], ["sakura", "櫻花"], ["sand", "沙丘"],

@@ -3,7 +3,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { DrillPanel, MAX_GAME_IDS } from "@/components/MatchList"
 import { Kpi, Panel, EmptyState, QueryError } from "@/components/primitives"
 import { AgTable, type GridColumn } from "@/components/AgTable"
-import { GapForest, Findings } from "@/components/GapForest"
+import { GapForest, Findings, ForestLegend } from "@/components/GapForest"
 import { gapOf, reachOf, type GapRow } from "@/lib/gap"
 import { useCube } from "@/hooks/useCube"
 import { num } from "@/lib/cube"
@@ -299,9 +299,9 @@ export function Losses() {
       {who !== "all" && (
       <Panel
         title="對局長度與勝率"
-        caption={`每一列是一段對局長度（遊戲內時鐘），點是那段的勝率比整體 ${overallWr === null ? "—" : `${overallWr.toFixed(1)}%`} 高或低幾個百分點，線是 95% 區間，區間整段在整體同一邊才上色。切法：8:00 是最早能投降的時間，之前是重開或斷線、不算正常對局；13:40 是統計上唯一站得住腳的轉折；其餘依場數等分，邊界只看長度、不看勝負（方法與數字見 docs/duration-bucketing.md）。${
-          who === "account" ? "" : "追蹤對象的每位玩家每場各算一次，同場多人會重複，區間比實際窄。"
-        }注意因果方向：贏的時候通常推得快，所以短局勝率高多半是結果、不是原因。點一列看那些場次`}
+        caption={`每一列是一段對局長度（遊戲內時鐘）：點是那段的勝率比整體 ${overallWr === null ? "—" : `${overallWr.toFixed(1)}%`} 高或低幾個百分點，線是 95% 區間。${
+          who === "account" ? "" : "追蹤對象每位玩家每場各算一次，同場多人會重複，區間比實際窄。"
+        }點一列看那些場次`}
       >
         {byDuration.loading || overallWr === null ? (
           <Skeleton className="h-[260px] w-full" />
@@ -310,14 +310,25 @@ export function Losses() {
         ) : durationRows.length ? (
           <div className="reveal space-y-3">
             <Findings items={durationFindings} empty="目前沒有哪一段長度看得出差別：差距都還在樣本誤差內。" />
+            <ForestLegend />
             <GapForest
               rows={durationRows}
               baseline={overallWr}
               reach={reachOf(durationRows, overallWr)}
               selected={bucket}
-              labelWidth="minmax(0,9rem)"
+              labelWidth="minmax(0,8.5rem)"
               onPick={(row) => setBucket((cur) => (cur === row.key ? null : row.key))}
             />
+            <details className="text-[11px] leading-relaxed text-muted-foreground">
+              <summary className="cursor-pointer select-none font-medium text-foreground">這幾段怎麼切的、怎麼讀</summary>
+              <div className="mt-1.5 max-w-3xl space-y-1">
+                <p>
+                  8:00 是最早能投降的時間，之前是重開或斷線，不算正常對局，只列出來、不拿來和整體比。13:40 是統計上唯一站得住腳的轉折
+                  （之前約 68%、之後約 46%）；之後沒有其他有統計支持的結構，所以依場數等分，邊界只看長度、不看勝負。方法與數字見 docs/duration-bucketing.md。
+                </p>
+                <p>注意因果方向：贏的時候通常推得快，所以短局勝率高多半是結果、不是原因。</p>
+              </div>
+            </details>
           </div>
         ) : (
           <EmptyState>還沒有資料。</EmptyState>
