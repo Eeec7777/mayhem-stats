@@ -20,6 +20,8 @@ import { WhoSwitch } from "@/components/WhoSwitch"
 import { usePageWho } from "@/lib/whoState"
 import { useWhoScope, type Who } from "@/lib/who"
 import { MIN_GAMES, NO_LIMIT, round0, round1 } from "./shared"
+import { empiricalBayes, shrinkRate } from "@/lib/gap"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 
 const ALL = "__all__"
 
@@ -43,6 +45,20 @@ function buildColumns(
   return [
     { key: "augments.name", title: "增幅裝置", kind: "dimension", iconKey: "augments.icon_path", rarityKey: "augments.rarity", flex: 1.8, minWidth: 190 },
     { key: G, title: "場次", kind: "metric", format: round0, flex: 0.5, minWidth: 70 },
+    {
+      // 依場次往整體平均收縮後的勝率（實證貝氏，見勝率排行的說明）。排序用它，比原始勝率不會被一兩場的運氣帶走
+      key: "ebWr",
+      title: "可信勝率",
+      kind: "metric",
+      flex: 0.8,
+      minWidth: 110,
+      cell: (r) => (
+        <StatCell
+          main={numOf(r, "ebWr") === null ? "—" : `${num0(r, "ebWr").toFixed(1)}%`}
+          sub={`原始 ${numOf(r, "participants.winrate") === null ? "—" : `${num0(r, "participants.winrate").toFixed(1)}%`}`}
+        />
+      ),
+    },
     {
       key: "participants.winrate",
       title: "戰績",
@@ -199,6 +215,22 @@ export function Augments() {
   const overallWr = overallGames ? (100 * num0(overallRow, "participants.wins")) / overallGames : null
   const overallDpm = overallRow ? num(overallRow["participants.dpm"]) : null
 
+  // 增幅之間「真正的」強弱差距有多大：用資料量最大的「所有人」估（2026-10 實測約 ±1.7 個百分點，
+  // 而表上看到的差距約 ±4.6，多半是運氣；見 analysis/augment_rounds.py）。估出來的 m 拿來收縮目前範圍的勝率。
+  const allScope = useWhoScope("all")
+  const everyone = useCube(
+    allScope.q({ measures: ["participants.games", "participants.wins"], dimensions: ["augments.name"], filters: [HAS_AUGMENT], limit: NO_LIMIT }),
+  )
+  const eb = useMemo(
+    () =>
+      empiricalBayes(
+        everyone.rows.map((r) => ({ games: num0(r, "participants.games"), wins: num0(r, "participants.wins") })),
+        MIN_GAMES,
+      ),
+    [everyone.rows],
+  )
+  const [rankBy, setRankBy] = useState<"eb" | "raw">("eb")
+
   // 資料沒變就回傳同一個陣列：欄位定義跟著它重建，每次都換新的話 AG Grid 會把使用者點的排序重設
   const tableRows = useMemo(() => {
     const baseMap = new Map(
@@ -211,13 +243,17 @@ export function Augments() {
     // 單一英雄的樣本通常只有個位數，所以選了英雄時什麼都不藏，全部列出來。
     // 排序用場次而不是加成：依加成排的話，最上面會整排是「1 場 1 勝 → +50pp」這種雜訊。
     // 想看加成排行點欄位標題就能換。
+    const withEb = (r: CubeRow): CubeRow => ({
+      ...r,
+      ebWr: overallWr === null ? null : shrinkRate(num0(r, G), num0(r, "participants.wins"), overallWr, eb.m),
+    })
     return champion
       ? rows
           .map((r): CubeRow => {
             const base = baseMap.get(String(r["augments.name"]))
             const wr = num(r["participants.winrate"])
             return {
-              ...r,
+              ...withEb(r),
               baseWr: base?.wr ?? null,
               baseGames: base?.games ?? null,
               lift: wr !== null && base?.wr != null ? wr - base.wr : null,
@@ -228,8 +264,8 @@ export function Augments() {
               (num(b["participants.games"]) ?? 0) - (num(a["participants.games"]) ?? 0) ||
               (num(b.lift) ?? -999) - (num(a.lift) ?? -999),
           )
-      : rows
-  }, [rows, baseline.rows, champion])
+      : rows.map(withEb)
+  }, [rows, baseline.rows, champion, overallWr, eb.m])
   const columns = useMemo(
     () => buildColumns(tableRows, !!champion, overallWr, overallDpm, scope.baselineLabel),
     [tableRows, champion, overallWr, overallDpm, scope.baselineLabel],
@@ -239,14 +275,15 @@ export function Augments() {
   // 單一英雄時幾乎沒有增幅到得了門檻，圖會永遠是空的——改成全部都畫，
   // 長條顏色本來就會依場次往平均收斂，1 場全勝不會被畫成深綠。
   const chartMin = champion ? 1 : MIN_GAMES
-  const top: BarDatum[] = rows
+  const top: BarDatum[] = tableRows
     .filter((r) => (num(r["participants.games"]) ?? 0) >= chartMin)
     .map((r) => ({
       label: String(r["augments.name"] ?? "—"),
-      value: num(r["participants.winrate"]) ?? 0,
+      value: (rankBy === "eb" ? num(r.ebWr) : num(r["participants.winrate"])) ?? 0,
       games: num(r["participants.games"]) ?? 0,
     }))
-    .sort((a, b) => b.value - a.value)
+    .sort((a, b) => b.value - a.value || b.games - a.games)
+  const trueSd = Math.sqrt(eb.tau2) * 100
 
   return (
     <div className="space-y-4">
@@ -289,13 +326,27 @@ export function Augments() {
 
       <Panel
         title={champion ? `${champion} 最常選的增幅` : "勝率排行"}
-        caption={
+        caption={`${
           champion
-            ? "這隻英雄選過的每個增幅，依勝率排列，超過 14 個時在圖上捲動。樣本多半只有一兩場，長條顏色已依場次往平均收斂——滑過長條看場次"
-            : `僅計入 ${MIN_GAMES} 場以上的增幅，超過 14 個時在圖上捲動。點一根長條（或表格的一列）會列出選了它的每一場，表格與長條也會互相亮起`
+            ? "這隻英雄選過的每個增幅，超過 14 個時在圖上捲動。"
+            : `僅計入 ${MIN_GAMES} 場以上的增幅，超過 14 個時在圖上捲動；點一根長條（或表格的一列）會列出選了它的每一場。`
+        }${
+          rankBy === "eb"
+            ? everyone.loading
+              ? ""
+              : Number.isFinite(eb.m)
+                ? `「可信勝率」是依場次往整體勝率收縮後的值：從所有人 ${eb.picks.toLocaleString()} 次選取估出，增幅之間真正的強弱差距只有約 ±${trueSd.toFixed(1)} 個百分點，原始勝率的差距大多是運氣，所以每個增幅先加上約 ${Math.round(eb.m)} 場整體勝率的虛擬場次——場次越多越接近原始勝率。${who === "all" ? "" : "這個範圍每個增幅只有幾十場，收縮後幾乎都在平均附近；想看增幅本身的強弱，切到「所有人」。"}`
+                : "「可信勝率」：目前的資料看不出增幅之間有真正的強弱差距（離散完全在運氣範圍內），所以全部收到整體勝率。"
+            : "原始勝率：一兩場的增幅會因為運氣排到最前面或最後面，滑過長條看場次。"
+        }`}
+        action={
+          <ToggleGroup type="single" size="sm" variant="outline" value={rankBy} onValueChange={(v) => v && setRankBy(v as "eb" | "raw")}>
+            <ToggleGroupItem value="eb">可信勝率</ToggleGroupItem>
+            <ToggleGroupItem value="raw">原始勝率</ToggleGroupItem>
+          </ToggleGroup>
         }
       >
-        {loading ? (
+        {loading || overall.loading || (rankBy === "eb" && everyone.loading) ? (
           <Skeleton className="h-[320px] w-full" />
         ) : top.length ? (
           // 平均線要傳整體勝率：預設的「長條自己的加權平均」會把一場的多個增幅重複計入

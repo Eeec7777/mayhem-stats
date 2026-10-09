@@ -56,7 +56,9 @@ test.describe("增幅裝置頁：表格與排行", () => {
     expect(text).toMatch(/Prismatic|Gold|Silver/)
   })
 
-  test("勝率排行只畫 5 場以上的增幅，長條值 = SQL 勝率", async ({ page }) => {
+  test("勝率排行只畫 5 場以上的增幅；切到「原始勝率」時長條值 = SQL 勝率", async ({ page }) => {
+    await page.getByRole("radio", { name: "原始勝率" }).click()
+    await ready(page)
     const chart = charts(page).first()
     const bars = await visibleBars(chart)
     expect(bars.length).toBeGreaterThan(0)
@@ -69,6 +71,36 @@ test.describe("增幅裝置頁：表格與排行", () => {
     // 圖上畫的增幅數 = 5 場以上的增幅數
     const opt = await chart.evaluate((el) => (el.parentElement as any).__chart.getOption().yAxis[0].data.length)
     expect(opt).toBe(myAugments().filter((r) => Number(r.n) >= MIN_GAMES).length)
+  })
+
+  test("預設「可信勝率」：所有人的增幅勝率估出收縮強度，長條值 = 往自己整體勝率收縮後的值（獨立計算）", async ({ page }) => {
+    await expect(page.getByRole("radio", { name: "可信勝率" })).toHaveAttribute("aria-checked", "true")
+    // 收縮強度：所有人、5 場以上的增幅，矩估計 τ²，m = μ(1−μ)/τ²
+    const all = sql(
+      `SELECT a.name, COUNT(*) AS n, SUM(p.win) AS w FROM participant_augments pa
+         JOIN match_participants p USING (platform_id, game_id, participant_id) JOIN matches m USING (platform_id, game_id)
+         JOIN dim_augments a ON a.id = pa.augment_id WHERE m.queue_id = 2400 GROUP BY a.name`,
+    ).map((r) => ({ n: Number(r.n), w: Number(r.w) })).filter((r) => r.n >= MIN_GAMES)
+    const N = all.reduce((a, r) => a + r.n, 0)
+    const mu = all.reduce((a, r) => a + r.w, 0) / N
+    const ss = all.reduce((a, r) => a + r.n * (r.w / r.n - mu) ** 2, 0)
+    const tau2 = Math.max(0, (ss - all.length * mu * (1 - mu)) / N)
+    const m = (mu * (1 - mu)) / tau2
+    const rec = sql(
+      `SELECT COUNT(*) AS n, SUM(p.win) AS w FROM match_participants p JOIN matches mm USING (platform_id, game_id) WHERE p.puuid = ? AND mm.queue_id = 2400`,
+      [mePuuid()],
+    )[0]
+    const base = (100 * Number(rec.w)) / Number(rec.n)
+    await expect(page.getByText(new RegExp(`每個增幅先加上約 ${Math.round(m)} 場`))).toBeVisible()
+    const bySql = new Map(myAugments().map((r) => [String(r.name), r]))
+    const bars = await visibleBars(charts(page).first())
+    expect(bars.length).toBeGreaterThan(0)
+    for (const b of bars.slice(0, 15)) {
+      const r = bySql.get(b.label)!
+      expect(b.value, b.label).toBeCloseTo((100 * Number(r.w) + m * base) / (Number(r.n) + m), 1)
+    }
+    // 表格多一欄「可信勝率」
+    await expect(page.locator('.ag-header-cell[col-id="ebWr"]').first()).toContainText("可信勝率")
   })
 
   test("點一根長條 → 下方出現「選了「X」 的每一場」，場次數和 SQL 一致、麵包屑多一層；收起後消失", async ({ page }) => {

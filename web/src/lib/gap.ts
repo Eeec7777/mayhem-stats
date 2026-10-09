@@ -86,3 +86,24 @@ export function binomialP(x: number, n: number) {
   }
   return Math.min(1, p)
 }
+
+/** 實證貝氏（矩估計）：從一大群組（例如所有增幅）的勝率離散程度，估出「組與組之間真正的差距」有多大。
+ *
+ *  觀察到的離散 = 真正的差距 τ² + 純運氣（p(1−p)/n）。τ² 很小時，表上看到的差距大多是運氣。
+ *  回傳 m = p(1−p)/τ²：收縮時相當於每組先加上 m 場「整體勝率」的虛擬場次；τ² 估成 0 時 m 是 Infinity（全部收到平均）。
+ *  只用場次 ≥ minGames 的組來估，免得一兩場的組把離散灌大。 */
+export function empiricalBayes(rows: { games: number; wins: number }[], minGames = MIN_N) {
+  const used = rows.filter((r) => r.games >= minGames)
+  const n = used.reduce((a, r) => a + r.games, 0)
+  if (!n || used.length < 3) return { mu: null as number | null, tau2: 0, m: Infinity, groups: used.length, picks: n }
+  const mu = used.reduce((a, r) => a + r.wins, 0) / n
+  const ss = used.reduce((a, r) => a + r.games * (r.wins / r.games - mu) ** 2, 0)
+  const tau2 = Math.max(0, (ss - used.length * mu * (1 - mu)) / n)
+  return { mu, tau2, m: tau2 > 0 ? (mu * (1 - mu)) / tau2 : Infinity, groups: used.length, picks: n }
+}
+
+/** 收縮後的勝率（%）：往 base（%）拉，拉多少看 m（見 empiricalBayes）。m 是 Infinity 時就是 base。 */
+export function shrinkRate(games: number, wins: number, base: number, m: number) {
+  if (!Number.isFinite(m)) return base
+  return (100 * wins + m * base) / (games + m)
+}
