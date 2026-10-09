@@ -19,7 +19,7 @@ import { useFilters, type Player } from "@/lib/filters"
 import { useCrumb } from "@/lib/breadcrumb"
 import { useNavigate } from "@/lib/nav"
 import { cn } from "@/lib/utils"
-import { BUILD_ROLES, BUILD_SHORT, MIN_GAMES, NO_LIMIT, round0 } from "./shared"
+import { BUILD_ROLES, BUILD_SHORT, MIN_GAMES, NO_LIMIT, round0, splitRiotId } from "./shared"
 
 // ── 「適合／不適合」的判斷：貢獻為主、勝率為輔 ─────────────────────────
 // 貢獻：語意層的 contribution.score（隊內貢獻排名，占全隊的比例，不含當局表現分——表現分和勝負相關，不能拿來判斷「運氣」）——輸出、承傷、存活、參團、控場（有治療或護盾隊友時再加治療護盾），各自和「同類型」
@@ -46,11 +46,7 @@ const dev = (r: CubeRow | undefined) => {
   return v === null ? null : v - 50
 }
 
-/** Riot ID 拆成名稱與 #tag，版面上 tag 用淡色 */
-const splitId = (riotId: string | null, puuid: string) => {
-  const [name, tag] = (riotId ?? puuid.slice(0, 8)).split("#")
-  return { name, tag: tag ? `#${tag}` : "" }
-}
+const splitId = splitRiotId
 
 function PlayerName({ player, className }: { player: Player; className?: string }) {
   const { name, tag } = splitId(player.riot_id, player.puuid)

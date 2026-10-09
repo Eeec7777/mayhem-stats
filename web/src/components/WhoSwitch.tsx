@@ -19,10 +19,13 @@ export function WhoSwitch({
   who,
   onChange,
   trackedCount,
+  disabled,
 }: {
   who: Who
   onChange: (who: Who) => void
   trackedCount: number
+  /** 這一頁不適用的選項與原因。停用的選項照樣顯示（不是藏起來），原因寫在下面，免得使用者以為少了功能 */
+  disabled?: Partial<Record<Who, string>>
 }) {
   const { account } = useFilters()
   useCrumb(5, who === "account" ? null : WHO_LABEL[who], () => onChange("account"))
@@ -40,15 +43,22 @@ export function WhoSwitch({
       <div role="radiogroup" aria-label="看誰的數據" className="flex rounded-lg border bg-muted/40 p-0.5">
         {OPTIONS.map(({ value, icon: Icon }) => {
           const on = who === value
+          const off = disabled?.[value]
           return (
             <button
               key={value}
               role="radio"
               aria-checked={on}
-              onClick={() => onChange(value)}
+              aria-disabled={!!off}
+              title={off}
+              onClick={() => !off && onChange(value)}
               className={cn(
                 "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition",
-                on ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                off
+                  ? "cursor-not-allowed text-muted-foreground/50"
+                  : on
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
               )}
             >
               <Icon className="size-4" />
@@ -59,6 +69,12 @@ export function WhoSwitch({
         })}
       </div>
       <span className="text-xs text-muted-foreground">{detail}</span>
+      {disabled &&
+        (Object.keys(disabled) as Who[]).map((k) => (
+          <span key={k} className="basis-full text-[11px] text-muted-foreground">
+            「{WHO_LABEL[k]}」不能選：{disabled[k]}
+          </span>
+        ))}
     </div>
   )
 }

@@ -12,7 +12,13 @@ export const MIN_GAMES = 5
  *  AG Grid 只渲染看得到的列，上萬列捲動也不卡。 */
 export const NO_LIMIT = 50000
 
-export const WEEKDAYS = ["週日", "週一", "週二", "週三", "週四", "週五", "週六"]
+/** Riot ID 拆成名稱與 #tag，版面上 tag 用淡色。沒有名稱時用 puuid 前 8 碼 */
+export const splitRiotId = (riotId: string | null, puuid: string) => {
+  const [name, tag] = (riotId ?? puuid.slice(0, 8)).split("#")
+  return { name, tag: tag ? `#${tag}` : "" }
+}
+
+export const WEEKDAYS =["週日", "週一", "週二", "週三", "週四", "週五", "週六"]
 
 /** 熱力圖的粗分組。
  *

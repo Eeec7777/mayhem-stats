@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test"
 import { test, expect } from "./fixtures"
-import { charts, clickBar, openPage, visibleBars } from "./helpers"
+import { charts, clickBar, openPage, ready, visibleBars } from "./helpers"
 import { mePuuid, sql } from "./db"
 
 const MIN_GAMES = 5
@@ -153,5 +153,106 @@ test.describe("節奏與連敗頁", () => {
   test("說明文字：關聯不是因果", async ({ page }) => {
     await expect(page.getByText(/這是關聯不是因果/)).toBeVisible()
     await expect(page.getByText(/60 分鐘是分析上的切法/)).toBeVisible()
+  })
+})
+
+/** 自己加上追蹤對象，各自照「前一場」分組的場數與勝場（獨立的視窗函數，不讀 mat_participant_context）。 */
+function crewByPerson() {
+  const rows = sql(
+    `WITH s AS (
+       SELECT p.puuid, p.win,
+              LAG(p.win) OVER (PARTITION BY p.puuid ORDER BY m.game_creation, m.platform_id, m.game_id) AS prev
+         FROM match_participants p JOIN matches m USING (platform_id, game_id)
+        WHERE m.queue_id = 2400 AND p.puuid IN (SELECT puuid FROM accounts WHERE is_me = 1 OR tracked = 1))
+     SELECT puuid, prev, COUNT(*) AS n, SUM(win) AS w FROM s GROUP BY puuid, prev`,
+  )
+  const names = new Map(sql("SELECT puuid, riot_id FROM accounts").map((r) => [String(r.puuid), String(r.riot_id ?? "").split("#")[0]]))
+  const people = new Map<string, { name: string; loss: { n: number; w: number }; win: { n: number; w: number } }>()
+  for (const r of rows) {
+    const p = people.get(String(r.puuid)) ?? { name: names.get(String(r.puuid)) ?? "", loss: { n: 0, w: 0 }, win: { n: 0, w: 0 } }
+    if (r.prev === 0) p.loss = { n: Number(r.n), w: Number(r.w) }
+    if (r.prev === 1) p.win = { n: Number(r.n), w: Number(r.w) }
+    people.set(String(r.puuid), p)
+  }
+  return [...people.values()]
+}
+
+const pct = (c: { n: number; w: number }) => `${((100 * c.w) / c.n).toFixed(0)}%`
+const whoRadio = (page: Page, name: string) => page.getByRole("radio", { name: new RegExp(name) })
+
+test.describe("節奏與連敗頁：看誰的數據", () => {
+  test.beforeEach(async ({ page }) => {
+    await openPage(page, "tilt")
+  })
+
+  test("「所有人」停用並寫出原因，點了不會換；預設不出現逐人面板", async ({ page }) => {
+    const all = whoRadio(page, "所有人")
+    await expect(all).toHaveAttribute("aria-disabled", "true")
+    await expect(page.getByText(/「所有人」不能選：.*沒有完整歷史/)).toBeVisible()
+    await all.click({ force: true })
+    await expect(whoRadio(page, "目前帳號")).toHaveAttribute("aria-checked", "true")
+    await expect(crumbs(page)).toHaveCount(0)
+    await expect(page.getByText("每個人的落差")).toHaveCount(0)
+  })
+
+  test("追蹤對象：KPI 的場次與勝率 = 每個人的場次加總", async ({ page }) => {
+    await whoRadio(page, "追蹤對象").click()
+    await expect(crumbs(page)).toContainText("追蹤對象")
+    await ready(page)
+    const people = crewByPerson()
+    const sum = (k: "loss" | "win") => people.reduce((a, p) => ({ n: a.n + p[k].n, w: a.w + p[k].w }), { n: 0, w: 0 })
+    const loss = sum("loss")
+    const win = sum("win")
+    await expect(card(page, "前一場輸之後")).toContainText(`${((loss.w / loss.n) * 100).toFixed(1)}%`)
+    await expect(card(page, "前一場輸之後")).toContainText(`${loss.n} 場`)
+    await expect(card(page, "前一場贏之後")).toContainText(`${((win.w / win.n) * 100).toFixed(1)}%`)
+    await expect(card(page, "前一場贏之後")).toContainText(`${win.n} 場`)
+    await expect(card(page, "落差")).toContainText("同場重複算，區間偏窄")
+  })
+
+  test("逐人面板：每人一列（名稱、落差、輸後／贏後的勝率與場次）加一列合併，和獨立計算一致", async ({ page }) => {
+    await whoRadio(page, "追蹤對象").click()
+    await ready(page)
+    const people = crewByPerson()
+    const rows = card(page, "每個人的落差").getByRole("img")
+    // 每位玩家一列，再加最下面的合併
+    await expect(rows).toHaveCount(people.length + 1)
+    const texts = await rows.evaluateAll((els) => els.map((e) => (e as HTMLElement).innerText.replace(/\s+/g, " ")))
+    for (const p of people) {
+      const detail = `輸後 ${pct(p.loss)}（${p.loss.n}）・贏後 ${pct(p.win)}（${p.win.n}）`
+      const hit = texts.find((t) => t.includes(detail) && t.includes(p.name))
+      expect(hit, `${p.name} ${detail}`).toBeTruthy()
+      if (p.loss.n >= MIN_GAMES && p.win.n >= MIN_GAMES) {
+        const d = (p.loss.w / p.loss.n - p.win.w / p.win.n) * 100
+        expect(hit, p.name).toContain(`${d > 0 ? "+" : ""}${d.toFixed(1)} pp`)
+      } else {
+        expect(hit, p.name).toContain("樣本太少")
+      }
+    }
+    // 合併那列 = 大家加總
+    const loss = people.reduce((a, p) => a + p.loss.n, 0)
+    const win = people.reduce((a, p) => a + p.win.n, 0)
+    expect(texts.at(-1)).toContain(`合併（${people.length} 位）`)
+    expect(texts.at(-1)).toContain(`（${loss}）`)
+    expect(texts.at(-1)).toContain(`（${win}）`)
+  })
+
+  test("追蹤對象下點「前一場輸」的長條：列出的場次數 = 每位玩家輸後那一場的總數（每人每場一列）", async ({ page }) => {
+    await whoRadio(page, "追蹤對象").click()
+    await ready(page)
+    const n = crewByPerson().reduce((a, p) => a + p.loss.n, 0)
+    await clickBar(page, charts(card(page, "前一場的結果，和這一場的勝率")).first(), "前一場輸")
+    await expect(card(page, "前一場輸 的每一場").getByText(`共 ${n} 場`)).toBeVisible()
+  })
+
+  test("切回目前帳號：逐人面板消失、麵包屑清掉、KPI 回到自己的數字", async ({ page }) => {
+    await whoRadio(page, "追蹤對象").click()
+    await ready(page)
+    await whoRadio(page, "目前帳號").click()
+    await ready(page)
+    await expect(page.getByText("每個人的落差")).toHaveCount(0)
+    await expect(crumbs(page)).toHaveCount(0)
+    const loss = tally(sequence(), (r) => r.prev).get("前一場輸")!
+    await expect(card(page, "前一場輸之後")).toContainText(`${loss.n} 場`)
   })
 })
