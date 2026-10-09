@@ -227,13 +227,17 @@ test.describe("時段頁：看誰的數據", () => {
     await expect(page.getByText("每個人在什麼時候打")).toHaveCount(0)
   })
 
-  test("追蹤對象：總場次 = 每人每場各算一次；每人一張星期 × 時段小圖，28 格的場次和 SQL 一致", async ({ page }) => {
+  test("追蹤對象：總場次一場只算一次；每人一張星期 × 時段小圖，28 格的場次和 SQL 一致", async ({ page }) => {
     await whoRadio(page, "追蹤對象").click()
     await expect(crumbs(page)).toContainText("追蹤對象")
     await ready(page)
     const rows = crewRows()
-    await expect(card(page, "總場次")).toContainText(String(rows.length))
-    await expect(card(page, "總場次")).toContainText("每位玩家的每一場各算一次")
+    const matches = sql(
+      `SELECT COUNT(DISTINCT m.platform_id || ':' || m.game_id) n FROM match_participants p JOIN matches m USING (platform_id, game_id)
+        WHERE m.queue_id = 2400 AND ${CREW}`,
+    )[0].n
+    await expect(card(page, "總場次").locator(".font-mono").first()).toHaveText(String(matches))
+    await expect(card(page, "總場次")).toContainText("同一場只算一次")
     const people = [...new Set(rows.map((r) => r.puuid))]
     const cardsOf = page.getByTestId("person-times-row")
     await expect(cardsOf).toHaveCount(people.length)
@@ -263,15 +267,13 @@ test.describe("時段頁：看誰的數據", () => {
     }
   })
 
-  test("追蹤對象下點一個星期：列出的場次數 = 那天所有人的場次（每人每場一列），並標出是誰玩的", async ({ page }) => {
+  test("追蹤對象：不畫合併的每日勝率、熱力圖與星期勝率（同一場會被每個人各算一次）", async ({ page }) => {
     await whoRadio(page, "追蹤對象").click()
     await ready(page)
-    const chart = charts(card(page, "星期別勝率")).first()
-    const pick = (await visibleBars(chart)).filter((b) => b.value > 0)[0]
-    const wd = WEEKDAYS.indexOf(pick.label)
-    await clickBar(page, chart, pick.label)
-    const n = crewRows().filter((r) => r.wd === wd).length
-    await expect(card(page, `${pick.label} 全天 的每一場`).getByText(`共 ${n} 場`)).toBeVisible()
+    for (const title of ["每天的場次與勝率", "星期 × 時段", "星期別勝率"]) await expect(page.getByText(title, { exact: true })).toHaveCount(0)
+    await expect(page.getByText(/不畫合併的每日勝率與熱力圖/)).toBeVisible()
+    // 第三張 KPI 換成「最多人會在的時段」，和總覽人數最多的那格一致
+    await expect(card(page, "最多人會在的時段")).toContainText(/\d 人在這個時段打過 5 場以上/)
   })
 
   test("切回目前帳號：逐人面板消失、麵包屑清掉", async ({ page }) => {

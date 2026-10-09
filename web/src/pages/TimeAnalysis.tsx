@@ -19,7 +19,7 @@ import { useCube } from "@/hooks/useCube"
 import { MAX_GAME_IDS, num, type CubeFilter } from "@/lib/cube"
 import { useFilters } from "@/lib/filters"
 import { usePageWho } from "@/lib/whoState"
-import { participantRows, useWhoScope, type Who } from "@/lib/who"
+import { useWhoScope, type Who } from "@/lib/who"
 import { WhoSwitch } from "@/components/WhoSwitch"
 import { useCrumb } from "@/lib/breadcrumb"
 import { BLOCKS, MIN_GAMES, NO_LIMIT, WEEKDAYS, splitRiotId, toBlocks } from "./shared"
@@ -194,20 +194,31 @@ export function TimeAnalysis() {
     }),
   )
 
+  // 追蹤對象不畫合併的熱力圖與星期勝率（理由見下方 tracked 的版面），不必查
+  const pooled = who !== "tracked"
   const heat = useCube(
-    apply({
-      measures: ["participants.games", "participants.winrate"],
-      dimensions: ["matches.weekday", "matches.hour_of_day"],
-      limit: 400,
-    }),
+    pooled
+      ? apply({
+          measures: ["participants.games", "participants.winrate"],
+          dimensions: ["matches.weekday", "matches.hour_of_day"],
+          limit: 400,
+        })
+      : null,
   )
 
   const byWeekday = useCube(
-    apply({
-      measures: ["participants.games", "participants.winrate"],
-      dimensions: ["matches.weekday"],
-      limit: 10,
-    }),
+    pooled
+      ? apply({
+          measures: ["participants.games", "participants.winrate"],
+          dimensions: ["matches.weekday"],
+          limit: 10,
+        })
+      : null,
+  )
+
+  // 追蹤對象的場數要一場只算一次：向 Cube 要有追蹤對象在場的對局，數列數
+  const crewMatches = useCube(
+    pooled ? null : apply({ measures: ["participants.games"], dimensions: ["matches.game_id"], limit: NO_LIMIT }),
   )
 
   // 追蹤對象才需要逐人拆開
@@ -237,7 +248,7 @@ export function TimeAnalysis() {
     return [...acc.values()].sort((a, b) => b.games - a.games)
   }, [byPerson.rows, players])
 
-  const queryError = daily.error ?? heat.error ?? byWeekday.error ?? byPerson.error
+  const queryError = daily.error ?? heat.error ?? byWeekday.error ?? byPerson.error ?? crewMatches.error
   const setWho = (next: Who) => {
     setWhoState(next)
     setSlice(null)
@@ -317,12 +328,61 @@ export function TimeAnalysis() {
     )
   }
 
+  // 追蹤對象：只回答「誰在什麼時候打、哪些時段湊得齊人」。
+  // 不畫合併的每日勝率、熱力圖與星期勝率——大家常一起打，同一場會被在場的每個人各算一次
+  // （一天 20 場變成 128「場」），合起來的場次與勝率沒有意義；每個人自己的勝率切到目前帳號、用帳號切換器看。
+  if (who === "tracked") {
+    const best = (() => {
+      let top: { weekday: number; block: number; people: number; games: number } | null = null
+      for (let weekday = 0; weekday < 7; weekday++)
+        for (let block = 0; block < BLOCKS.length; block++) {
+          const people = personRows.filter((r) => r.grid[weekday][block] >= MIN_GAMES).length
+          const games = personRows.reduce((a, r) => a + r.grid[weekday][block], 0)
+          if (!top || people > top.people || (people === top.people && games > top.games)) top = { weekday, block, people, games }
+        }
+      return top
+    })()
+    return (
+      <div className="space-y-4">
+        <WhoSwitch who={who} onChange={setWho} trackedCount={scope.trackedCount} disabled={NO_ALL} />
+        {queryError && <QueryError error={queryError} />}
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Kpi label="總場次" value={String(crewMatches.rows.length)} hint="有你或追蹤對象在場的對局，同一場只算一次" loading={crewMatches.loading} />
+          <Kpi
+            label="打過的日子"
+            value={String(days.length)}
+            hint={days.length ? `${days[0].date} 起` : undefined}
+            loading={daily.loading}
+          />
+          <Kpi
+            label="最多人會在的時段"
+            value={best && best.people ? `${WEEKDAYS[best.weekday]} ${BLOCKS[best.block].label.split(" ")[0]}` : "—"}
+            hint={best && best.people ? `${best.people} 人在這個時段打過 ${MIN_GAMES} 場以上` : undefined}
+            loading={byPerson.loading}
+          />
+        </div>
+        <Panel
+          title="每個人在什麼時候打"
+          caption="上面是哪些時段湊得齊人，下面是每個人各自的星期 × 時段：同一種格子，欄是星期、列是時段。這裡不畫合併的每日勝率與熱力圖：大家常一起打，同一場會被在場的每個人各算一次，合起來的場次與勝率沒有意義"
+        >
+          {byPerson.loading ? (
+            <Skeleton className="h-[560px] w-full" />
+          ) : personRows.length ? (
+            <PersonTimes rows={personRows} />
+          ) : (
+            <EmptyState>這個條件下還沒有資料。</EmptyState>
+          )}
+        </Panel>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-4">
       <WhoSwitch who={who} onChange={setWho} trackedCount={scope.trackedCount} disabled={NO_ALL} />
       {queryError && <QueryError error={queryError} />}
       <div className="grid gap-3 sm:grid-cols-3">
-        <Kpi label="總場次" value={String(totalGames)} hint={who === "tracked" ? "每位玩家的每一場各算一次" : undefined} loading={heat.loading} />
+        <Kpi label="總場次" value={String(totalGames)} loading={heat.loading} />
         <Kpi
           label="打過的日子"
           value={String(days.length)}
@@ -374,21 +434,6 @@ export function TimeAnalysis() {
           </p>
         )}
       </div>
-
-      {who === "tracked" && (
-        <Panel
-          title="每個人在什麼時候打"
-          caption="上面是哪些時段湊得齊人，下面是每個人各自的星期 × 時段：同一種格子，欄是星期、列是時段。合併的熱力圖會被打最多場的人帶著走，分開看才知道誰習慣什麼時候上線"
-        >
-          {byPerson.loading ? (
-            <Skeleton className="h-[560px] w-full" />
-          ) : personRows.length ? (
-            <PersonTimes rows={personRows} />
-          ) : (
-            <EmptyState>這個條件下還沒有資料。</EmptyState>
-          )}
-        </Panel>
-      )}
 
       <Panel title="每天的場次與勝率" caption="折線是累積勝率，虛線是 50%；長條是每天的勝敗場次，上方數字是場次。點一天聚焦">
         {daily.loading ? (
@@ -482,15 +527,13 @@ export function TimeAnalysis() {
           >
             <CubeMatchList
               gameIdKey="matches.game_id"
-              listKey={`${who}|${sliceLabel(slice)}`}
+              listKey={sliceLabel(slice)}
               query={apply({
                 measures: ["participants.games"],
-                dimensions: [who === "tracked" ? "participants.participant_key" : "matches.game_id"],
+                dimensions: ["matches.game_id"],
                 filters: sliceFilters(slice),
                 limit: MAX_GAME_IDS,
               })}
-              rowsToParams={who === "tracked" ? participantRows : undefined}
-              showPlayer={who === "tracked"}
             />
           </Panel>
         </div>
