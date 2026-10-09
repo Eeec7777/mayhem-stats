@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { Fragment, useMemo, useState, type ReactNode } from "react"
 import { ArrowDown, Crosshair, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -22,7 +22,7 @@ import { usePageWho } from "@/lib/whoState"
 import { participantRows, useWhoScope, type Who } from "@/lib/who"
 import { WhoSwitch } from "@/components/WhoSwitch"
 import { useCrumb } from "@/lib/breadcrumb"
-import { BLOCKS, NO_LIMIT, WEEKDAYS, splitRiotId, toBlocks } from "./shared"
+import { BLOCKS, MIN_GAMES, NO_LIMIT, WEEKDAYS, splitRiotId, toBlocks } from "./shared"
 
 type Grain = "hour" | "block"
 
@@ -50,74 +50,128 @@ const sliceFilters = (s: Slice): CubeFilter[] =>
 /** 「所有人」在時段頁沒有意義：每場兩隊十位都算，勝率必然是 50%，場次分佈也只是把你自己的場次重複十次 */
 const NO_ALL = { all: "每場兩隊十位都算，勝率必然是 50%，時段分佈只是把你自己的場次重複十次" }
 
-type PersonRow = { puuid: string; name: string; tag: string; games: number; byDay: number[]; byBlock: number[] }
+/** grid[weekday][block]：這個人在那個星期幾的那個時段打了幾場 */
+type PersonRow = { puuid: string; name: string; tag: string; games: number; grid: number[][] }
 
-/** 追蹤對象每個人在什麼時候打：一人一列，左邊七天、右邊四時段，圓點大小是「佔他自己場次的比例」。
- *  合併起來的熱力圖會被打最多場的人帶著走，分開看才知道誰習慣什麼時候上線、哪些時段湊得齊人。
- *
- *  格子固定大小、不隨容器拉伸：原本用長條，格子被拉成又寬又扁的粗條，高低差看不出來，數字也擠在底下。
- *  圓點的面積跟比例成正比（半徑取平方根），人眼比較面積，不是直徑；0 場畫成一個空心小點，
- *  和「有打但很少」分得開。數字放在圓點旁，不放在色塊上，免得每個主題都要重新算對比。 */
-const DOT_MAX = 30
-const DOT_MIN = 6
+const BLOCK_SHORT = BLOCKS.map((b) => b.label.split(" ")[0])
+const DAY_SHORT = WEEKDAYS.map((d) => d.slice(1))
 
-function Dot({ n, max, label }: { n: number; max: number; label: string }) {
-  const size = n === 0 || !max ? 0 : Math.round(DOT_MIN + (DOT_MAX - DOT_MIN) * Math.sqrt(n / max))
+/** 依比例分成五階：單一色相、由淺到深（dataviz 的循序配色）。連續的透明度看不出「差一階」，分階才讀得出來。
+ *  0 場不上色，和「有打但很少」分得開。 */
+const STEP_ALPHA = [0.22, 0.4, 0.58, 0.78, 1]
+const stepOf = (ratio: number) => (ratio <= 0 ? -1 : Math.min(STEP_ALPHA.length - 1, Math.ceil(ratio * STEP_ALPHA.length) - 1))
+
+/** 一格：底色是淡灰，上面疊一層資料色，透明度依分階。格子裡不放字，所以每個主題都不必算文字對比 */
+function HeatCell({ ratio, title, size = "size-6", cap = 1 }: { ratio: number; title: string; size?: string; cap?: number }) {
+  const step = stepOf(ratio)
   return (
-    <div className="flex h-10 flex-col items-center justify-center" title={`${label}　${n} 場`}>
-      <div className="flex size-[30px] items-center justify-center">
-        {n === 0 ? (
-          <span className="size-1.5 rounded-full border border-muted-foreground/40" />
-        ) : (
-          <span className="rounded-full bg-data" style={{ width: size, height: size }} />
-        )}
-      </div>
-      <span className={`font-mono text-[10px] tabular-nums leading-none ${n === 0 ? "text-muted-foreground/50" : "text-muted-foreground"}`}>{n}</span>
+    <span title={title} className={`relative block ${size} overflow-hidden rounded-[3px] bg-muted/50`}>
+      {step >= 0 && <span className="absolute inset-0 bg-data" style={{ opacity: STEP_ALPHA[step] * cap }} />}
+    </span>
+  )
+}
+
+function StepLegend({ low, high, cap }: { low: string; high: string; cap?: number }) {
+  return (
+    <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+      {low}
+      {STEP_ALPHA.map((_, i) => (
+        <HeatCell key={i} ratio={(i + 1) / STEP_ALPHA.length} title="" size="size-3" cap={cap} />
+      ))}
+      {high}
+    </span>
+  )
+}
+
+/** 星期 × 時段的格子：欄是星期、列是四個時段。總覽和每個人的小圖共用同一個版型，讀法一致 */
+function DayBlockGrid({ cell, size = "size-6", labelClass = "text-[10px]" }: { cell: (weekday: number, block: number) => ReactNode; size?: string; labelClass?: string }) {
+  return (
+    <div className="inline-grid grid-cols-[auto_repeat(7,auto)] items-center gap-[3px]">
+      <span />
+      {DAY_SHORT.map((d) => (
+        <span key={d} className={`${labelClass} text-center text-muted-foreground`}>{d}</span>
+      ))}
+      {BLOCKS.map((_, block) => (
+        <Fragment key={block}>
+          <span className={`${labelClass} whitespace-nowrap pr-1 text-right text-muted-foreground`}>{BLOCK_SHORT[block]}</span>
+          {WEEKDAYS.map((__, weekday) => (
+            <span key={weekday} className={size}>{cell(weekday, block)}</span>
+          ))}
+        </Fragment>
+      ))}
     </div>
   )
 }
 
+/** 追蹤對象每個人在什麼時候打。
+ *
+ *  上面的總覽直接回答「哪些時段湊得齊人」：每格是有幾個人在那個時段累積了 MIN_GAMES 場以上（不是場次加總——
+ *  合併的場次會被打最多場的人帶著走）。下面是每人一張同版型的小熱力圖（small multiples），
+ *  深淺是佔他自己場次的比例，形狀一眼就能比：誰是週末晚上型、誰平日也打。
+ *  星期和時段放在同一張格子裡，才看得到「週六晚上」這種組合；分成兩排各自加總會把它拆散。 */
 function PersonTimes({ rows }: { rows: PersonRow[] }) {
-  const grid = "grid grid-cols-[11rem_repeat(7,4rem)_2rem_repeat(4,5.5rem)] items-center gap-x-1"
+  const regulars = (weekday: number, block: number) => rows.filter((r) => r.grid[weekday][block] >= MIN_GAMES)
   return (
-    <div className="overflow-x-auto">
-      <div className="w-max min-w-full">
-        <div className={`${grid} mb-1 text-[11px] font-medium text-muted-foreground`}>
-          <span />
-          <span className="col-span-7 border-b pb-0.5 text-center">星期</span>
-          <span />
-          <span className="col-span-4 border-b pb-0.5 text-center">時段</span>
-        </div>
-        <div className={`${grid} text-[11px] text-muted-foreground`}>
-          <span />
-          {WEEKDAYS.map((d) => (
-            <span key={d} className="text-center">{d}</span>
-          ))}
-          <span />
-          {BLOCKS.map((b) => (
-            <span key={b.label} className="text-center" title={b.label}>
-              {b.label.split(" ")[0]}
+    <div className="space-y-5">
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-xs font-medium">
+            常在這個時段打的人數
+            <span className="ml-2 font-normal text-muted-foreground">
+              在那個時段累積了 {MIN_GAMES} 場以上的人，滑過格子看是誰；越深越容易湊滿一隊
             </span>
-          ))}
+          </span>
+          <StepLegend low="0" high={`${rows.length} 人`} cap={0.62} />
         </div>
-        {rows.map((r) => (
-          <div key={r.puuid} data-testid="person-times-row" className={`${grid} border-t first:border-t-0`}>
-            <span className="flex min-w-0 flex-col py-1 pr-2 text-sm font-medium">
-              <span className="flex min-w-0 items-baseline gap-1">
-                <span className="truncate" title={`${r.name}${r.tag}`}>{r.name}</span>
-                {r.tag && <span className="shrink-0 text-[11px] font-normal text-muted-foreground">{r.tag}</span>}
-              </span>
-              <span className="font-mono text-[11px] font-normal text-muted-foreground">{r.games} 場</span>
-            </span>
-            {r.byDay.map((n, i) => (
-              <Dot key={`d${i}`} n={n} max={Math.max(...r.byDay)} label={`${r.name} ${WEEKDAYS[i]}`} />
-            ))}
-            <span />
-            {r.byBlock.map((n, i) => (
-              <Dot key={`b${i}`} n={n} max={Math.max(...r.byBlock)} label={`${r.name} ${BLOCKS[i].label}`} />
-            ))}
-          </div>
-        ))}
+        <DayBlockGrid
+            size="size-10"
+            labelClass="text-[11px]"
+            cell={(weekday, block) => {
+              const who = regulars(weekday, block)
+              return (
+                <span className="relative block size-10" data-testid="crew-overlap-cell">
+                  <HeatCell
+                    ratio={who.length / rows.length}
+                    size="size-10"
+                    // 格子上有數字：最深那階也只到六成，前景色的字在亮暗主題都讀得到
+                    cap={0.62}
+                    title={`${WEEKDAYS[weekday]} ${BLOCKS[block].label}：${who.length} 人${who.length ? `（${who.map((r) => r.name).join("、")}）` : ""}`}
+                  />
+                  {/* 數字疊在格子上但不吃滑鼠，tooltip 仍由格子給 */}
+                  <span className="pointer-events-none absolute inset-0 flex items-center justify-center font-mono text-xs font-semibold tabular-nums text-foreground">
+                    {who.length || ""}
+                  </span>
+                </span>
+              )
+            }}
+          />
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-xs font-medium">每個人</span>
+          <StepLegend low="少" high="多（佔他自己場次的比例）" />
+        </div>
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(13.5rem,1fr))] gap-3">
+          {rows.map((r) => {
+            const max = Math.max(1, ...r.grid.flat())
+            return (
+              <div key={r.puuid} data-testid="person-times-row" className="space-y-1.5 rounded-lg border bg-muted/10 p-2.5">
+                <div className="flex min-w-0 items-baseline gap-1 text-sm font-medium">
+                  <span className="truncate" title={`${r.name}${r.tag}`}>{r.name}</span>
+                  {r.tag && <span className="shrink-0 text-[11px] font-normal text-muted-foreground">{r.tag}</span>}
+                  <span className="ml-auto shrink-0 font-mono text-[11px] font-normal text-muted-foreground">{r.games} 場</span>
+                </div>
+                <DayBlockGrid
+                  cell={(weekday, block) => {
+                    const n = r.grid[weekday][block]
+                    return <HeatCell ratio={n / max} title={`${r.name} ${WEEKDAYS[weekday]} ${BLOCKS[block].label}　${n} 場`} />
+                  }}
+                />
+              </div>
+            )
+          })}
+        </div>
       </div>
     </div>
   )
@@ -172,13 +226,12 @@ export function TimeAnalysis() {
     for (const r of byPerson.rows) {
       const puuid = String(r["participants.puuid"])
       const { name, tag } = splitRiotId(byId.get(puuid)?.riot_id ?? null, puuid)
-      const cur = acc.get(puuid) ?? { puuid, name, tag, games: 0, byDay: Array(7).fill(0), byBlock: Array(BLOCKS.length).fill(0) }
+      const cur = acc.get(puuid) ?? { puuid, name, tag, games: 0, grid: WEEKDAYS.map(() => BLOCKS.map(() => 0)) }
       const n = num(r["participants.games"]) ?? 0
       const hour = Number(r["matches.hour_of_day"])
-      cur.games += n
-      cur.byDay[Number(r["matches.weekday"])] += n
       const block = BLOCKS.findIndex((b) => hour >= b.from && hour <= b.to)
-      if (block >= 0) cur.byBlock[block] += n
+      cur.games += n
+      if (block >= 0) cur.grid[Number(r["matches.weekday"])][block] += n
       acc.set(puuid, cur)
     }
     return [...acc.values()].sort((a, b) => b.games - a.games)
@@ -325,10 +378,10 @@ export function TimeAnalysis() {
       {who === "tracked" && (
         <Panel
           title="每個人在什麼時候打"
-          caption="一人一列：左邊是星期幾、右邊是四個時段，圓點越大代表佔他自己場次的比例越高（每個人各自最高的那格最大，面積成正比），旁邊的數字是場次，空心小點是沒打過。合併的圖會被打最多場的人帶著走，分開看才知道誰習慣什麼時候上線、哪些時段湊得齊人"
+          caption="上面是哪些時段湊得齊人，下面是每個人各自的星期 × 時段：同一種格子，欄是星期、列是時段。合併的熱力圖會被打最多場的人帶著走，分開看才知道誰習慣什麼時候上線"
         >
           {byPerson.loading ? (
-            <Skeleton className="h-[260px] w-full" />
+            <Skeleton className="h-[560px] w-full" />
           ) : personRows.length ? (
             <PersonTimes rows={personRows} />
           ) : (

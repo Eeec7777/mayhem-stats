@@ -227,7 +227,7 @@ test.describe("時段頁：看誰的數據", () => {
     await expect(page.getByText("每個人在什麼時候打")).toHaveCount(0)
   })
 
-  test("追蹤對象：總場次 = 每人每場各算一次；逐人面板一人一列，七天與四時段的場次和 SQL 一致", async ({ page }) => {
+  test("追蹤對象：總場次 = 每人每場各算一次；每人一張星期 × 時段小圖，28 格的場次和 SQL 一致", async ({ page }) => {
     await whoRadio(page, "追蹤對象").click()
     await expect(crumbs(page)).toContainText("追蹤對象")
     await ready(page)
@@ -235,17 +235,31 @@ test.describe("時段頁：看誰的數據", () => {
     await expect(card(page, "總場次")).toContainText(String(rows.length))
     await expect(card(page, "總場次")).toContainText("每位玩家的每一場各算一次")
     const people = [...new Set(rows.map((r) => r.puuid))]
-    const lines = page.getByTestId("person-times-row")
-    await expect(lines).toHaveCount(people.length)
-    // 一列一個人：場次由大到小，每列七天的格子加總 = 他的場次，四時段加總也一樣
+    const cardsOf = page.getByTestId("person-times-row")
+    await expect(cardsOf).toHaveCount(people.length)
+    // 一人一張：依場次由大到小。格子的 DOM 順序是一列一個時段、列內依星期
     const perPerson = people.map((p) => rows.filter((r) => r.puuid === p)).sort((a, b) => b.length - a.length)
     for (const [i, mine] of perPerson.entries()) {
-      const line = lines.nth(i)
-      await expect(line).toContainText(`${mine.length} 場`)
-      const cells = await line.locator("[title$=' 場']").evaluateAll((els) => els.map((e) => Number(e.getAttribute("title")!.match(/(\d+) 場$/)![1])))
-      expect(cells).toHaveLength(11)
-      expect(cells.slice(0, 7), `第 ${i + 1} 列的星期`).toEqual(WEEKDAYS.map((_, wd) => mine.filter((r) => r.wd === wd).length))
-      expect(cells.slice(7), `第 ${i + 1} 列的時段`).toEqual(BLOCKS.map((b) => mine.filter((r) => r.h >= b.from && r.h <= b.to).length))
+      const box = cardsOf.nth(i)
+      await expect(box).toContainText(`${mine.length} 場`)
+      const cells = await box.locator("[title$=' 場']").evaluateAll((els) => els.map((e) => Number(e.getAttribute("title")!.match(/(\d+) 場$/)![1])))
+      const expected = BLOCKS.flatMap((b) => WEEKDAYS.map((_, wd) => mine.filter((r) => r.wd === wd && r.h >= b.from && r.h <= b.to).length))
+      expect(cells, `第 ${i + 1} 張`).toEqual(expected)
+    }
+  })
+
+  test("追蹤對象：總覽每格 = 在那個時段累積 5 場以上的人數，和 SQL 一致", async ({ page }) => {
+    await whoRadio(page, "追蹤對象").click()
+    await ready(page)
+    const rows = crewRows()
+    const people = [...new Set(rows.map((r) => r.puuid))]
+    const titles = await page.getByTestId("crew-overlap-cell").locator("[title]").evaluateAll((els) => els.map((e) => e.getAttribute("title")!))
+    expect(titles).toHaveLength(28)
+    for (const [k, t] of titles.entries()) {
+      const b = BLOCKS[Math.floor(k / 7)]
+      const wd = k % 7
+      const n = people.filter((p) => rows.filter((r) => r.puuid === p && r.wd === wd && r.h >= b.from && r.h <= b.to).length >= 5).length
+      expect(t, `${WEEKDAYS[wd]} ${b.label}`).toMatch(new RegExp(`^${WEEKDAYS[wd]} ${b.label}：${n} 人`))
     }
   })
 
