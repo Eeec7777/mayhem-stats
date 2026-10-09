@@ -1,5 +1,5 @@
 import { useMemo } from "react"
-import type { CubeFilter, CubeQuery } from "@/lib/cube"
+import { MAX_GAME_IDS, type CubeFilter, type CubeQuery, type CubeRow } from "@/lib/cube"
 import { useFilters } from "@/lib/filters"
 
 /** 看誰的數據：目前帳號（其他頁一樣的預設）、自己加上追蹤對象、或資料庫裡出現過的所有參賽者 */
@@ -47,4 +47,15 @@ export function useWhoScope(who: Who): WhoScope {
         who === "account" ? undefined : { puuid: who === "all" ? "*" : tracked.join(","), ...extra },
     }
   }, [apply, who, tracked])
+}
+
+/** 追蹤對象的逐場下鑽：一列是「某位玩家的某一場」，不是一場。
+ *  查詢要帶 participants.participant_key（平台:場次:參賽者編號），交給 CubeMatchList 的 rowsToParams，
+ *  列出的就是圖上算進去的那幾列；只給 game_ids 的話，同場另一位追蹤對象不符合條件的那一列也會被列出來。 */
+export function participantRows(rows: CubeRow[]) {
+  const picks = rows.slice(0, MAX_GAME_IDS).map((r) => {
+    const [, game, pid] = String(r["participants.participant_key"]).split(":")
+    return `${game}:${pid}`
+  })
+  return picks.length ? { params: { puuid: "*", participants: picks.join(",") }, count: picks.length } : null
 }

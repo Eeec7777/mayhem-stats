@@ -206,3 +206,67 @@ test.describe("時段頁：星期別勝率與連動聚焦", () => {
     await expect(crumbs(page)).toHaveCount(0)
   })
 })
+
+test.describe("時段頁：看誰的數據", () => {
+  const whoRadio = (page: Page, name: string) => page.getByRole("radio", { name: new RegExp(name) })
+  const CREW = "p.puuid IN (SELECT puuid FROM accounts WHERE is_me = 1 OR tracked = 1)"
+  /** 自己加追蹤對象，每位玩家每場一列：本地星期、小時。 */
+  const crewRows = () =>
+    sql(
+      `SELECT p.puuid, m.local_weekday AS wd, m.local_hour AS h
+         FROM match_participants p JOIN matches m USING (platform_id, game_id) WHERE m.queue_id = 2400 AND ${CREW}`,
+    ).map((r) => ({ puuid: String(r.puuid), wd: Number(r.wd), h: Number(r.h) }))
+
+  test.beforeEach(async ({ page }) => {
+    await openPage(page, "time")
+  })
+
+  test("「所有人」停用並寫出原因；預設沒有逐人面板", async ({ page }) => {
+    await expect(whoRadio(page, "所有人")).toHaveAttribute("aria-disabled", "true")
+    await expect(page.getByText(/「所有人」不能選：每場兩隊十位都算/)).toBeVisible()
+    await expect(page.getByText("每個人在什麼時候打")).toHaveCount(0)
+  })
+
+  test("追蹤對象：總場次 = 每人每場各算一次；逐人面板一人一列，七天與四時段的場次和 SQL 一致", async ({ page }) => {
+    await whoRadio(page, "追蹤對象").click()
+    await expect(crumbs(page)).toContainText("追蹤對象")
+    await ready(page)
+    const rows = crewRows()
+    await expect(card(page, "總場次")).toContainText(String(rows.length))
+    await expect(card(page, "總場次")).toContainText("每位玩家的每一場各算一次")
+    const people = [...new Set(rows.map((r) => r.puuid))]
+    const lines = page.getByTestId("person-times-row")
+    await expect(lines).toHaveCount(people.length)
+    // 一列一個人：場次由大到小，每列七天的格子加總 = 他的場次，四時段加總也一樣
+    const perPerson = people.map((p) => rows.filter((r) => r.puuid === p)).sort((a, b) => b.length - a.length)
+    for (const [i, mine] of perPerson.entries()) {
+      const line = lines.nth(i)
+      await expect(line).toContainText(`${mine.length} 場`)
+      const cells = await line.locator("[title$=' 場']").evaluateAll((els) => els.map((e) => Number(e.getAttribute("title")!.replace(" 場", ""))))
+      expect(cells).toHaveLength(11)
+      expect(cells.slice(0, 7), `第 ${i + 1} 列的星期`).toEqual(WEEKDAYS.map((_, wd) => mine.filter((r) => r.wd === wd).length))
+      expect(cells.slice(7), `第 ${i + 1} 列的時段`).toEqual(BLOCKS.map((b) => mine.filter((r) => r.h >= b.from && r.h <= b.to).length))
+    }
+  })
+
+  test("追蹤對象下點一個星期：列出的場次數 = 那天所有人的場次（每人每場一列），並標出是誰玩的", async ({ page }) => {
+    await whoRadio(page, "追蹤對象").click()
+    await ready(page)
+    const chart = charts(card(page, "星期別勝率")).first()
+    const pick = (await visibleBars(chart)).filter((b) => b.value > 0)[0]
+    const wd = WEEKDAYS.indexOf(pick.label)
+    await clickBar(page, chart, pick.label)
+    const n = crewRows().filter((r) => r.wd === wd).length
+    await expect(card(page, `${pick.label} 全天 的每一場`).getByText(`共 ${n} 場`)).toBeVisible()
+  })
+
+  test("切回目前帳號：逐人面板消失、麵包屑清掉", async ({ page }) => {
+    await whoRadio(page, "追蹤對象").click()
+    await ready(page)
+    await whoRadio(page, "目前帳號").click()
+    await ready(page)
+    await expect(page.getByText("每個人在什麼時候打")).toHaveCount(0)
+    await expect(crumbs(page)).toHaveCount(0)
+    await expect(card(page, "總場次")).toContainText(String(myGames().length))
+  })
+})

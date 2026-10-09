@@ -18,8 +18,10 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useCube } from "@/hooks/useCube"
 import { MAX_GAME_IDS, num, type CubeFilter } from "@/lib/cube"
 import { useFilters } from "@/lib/filters"
+import { participantRows, useWhoScope, type Who } from "@/lib/who"
+import { WhoSwitch } from "@/components/WhoSwitch"
 import { useCrumb } from "@/lib/breadcrumb"
-import { BLOCKS, NO_LIMIT, WEEKDAYS, toBlocks } from "./shared"
+import { BLOCKS, NO_LIMIT, WEEKDAYS, splitRiotId, toBlocks } from "./shared"
 
 type Grain = "hour" | "block"
 
@@ -44,8 +46,60 @@ const sliceFilters = (s: Slice): CubeFilter[] =>
         },
       ]
 
+/** 「所有人」在時段頁沒有意義：每場兩隊十位都算，勝率必然是 50%，場次分佈也只是把你自己的場次重複十次 */
+const NO_ALL = { all: "每場兩隊十位都算，勝率必然是 50%，時段分佈只是把你自己的場次重複十次" }
+
+type PersonRow = { puuid: string; name: string; tag: string; games: number; byDay: number[]; byBlock: number[] }
+
+/** 追蹤對象每個人在什麼時候打：一人一列，左邊七天、右邊四時段，柱高是「佔他自己場次的比例」。
+ *  合併起來的熱力圖會被打最多場的人帶著走，分開看才知道誰習慣什麼時候上線、哪些時段湊得齊人。 */
+function PersonTimes({ rows }: { rows: PersonRow[] }) {
+  const cell = (n: number, max: number, key: string) => (
+    <div key={key} className="flex flex-col items-center gap-0.5" title={`${n} 場`}>
+      <div className="relative h-6 w-full overflow-hidden rounded-sm bg-muted/40">
+        <span className="absolute inset-x-0 bottom-0 bg-data" style={{ height: `${max ? (100 * n) / max : 0}%` }} />
+      </div>
+      <span className="font-mono text-[10px] tabular-nums text-muted-foreground">{n}</span>
+    </div>
+  )
+  const grid = "grid grid-cols-[minmax(0,9rem)_repeat(7,minmax(0,1fr))_0.5rem_repeat(4,minmax(0,1.4fr))] items-end gap-x-1.5 gap-y-2"
+  return (
+    <div className="overflow-x-auto">
+      <div className="min-w-[640px] space-y-2">
+        <div className={`${grid} text-[11px] text-muted-foreground`}>
+          <span />
+          {WEEKDAYS.map((d) => (
+            <span key={d} className="text-center">{d}</span>
+          ))}
+          <span />
+          {BLOCKS.map((b) => (
+            <span key={b.label} className="text-center" title={b.label}>{b.label.split(" ")[0]}</span>
+          ))}
+        </div>
+        {rows.map((r) => (
+          <div key={r.puuid} data-testid="person-times-row" className={grid}>
+            <span className="flex min-w-0 flex-col self-center text-sm font-medium">
+              <span className="flex min-w-0 items-baseline gap-1">
+                <span className="truncate">{r.name}</span>
+                {r.tag && <span className="shrink-0 text-[11px] font-normal text-muted-foreground">{r.tag}</span>}
+              </span>
+              <span className="font-mono text-[11px] font-normal text-muted-foreground">{r.games} 場</span>
+            </span>
+            {r.byDay.map((n, i) => cell(n, Math.max(...r.byDay), `d${i}`))}
+            <span />
+            {r.byBlock.map((n, i) => cell(n, Math.max(...r.byBlock), `b${i}`))}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export function TimeAnalysis() {
-  const { apply } = useFilters()
+  const { players } = useFilters()
+  const [who, setWhoState] = useState<Who>("account")
+  const scope = useWhoScope(who)
+  const apply = scope.q
   const [slice, setSlice] = useState<Slice | null>(null)
   const [grain, setGrain] = useState<Grain>("block")
   useCrumb(10, slice ? sliceLabel(slice) : null, () => setSlice(null))
@@ -74,7 +128,39 @@ export function TimeAnalysis() {
     }),
   )
 
-  const queryError = daily.error ?? heat.error ?? byWeekday.error
+  // 追蹤對象才需要逐人拆開
+  const byPerson = useCube(
+    who === "tracked"
+      ? apply({
+          measures: ["participants.games"],
+          dimensions: ["participants.puuid", "matches.weekday", "matches.hour_of_day"],
+          limit: NO_LIMIT,
+        })
+      : null,
+  )
+  const personRows: PersonRow[] = useMemo(() => {
+    const byId = new Map(players.map((p) => [p.puuid, p]))
+    const acc = new Map<string, PersonRow>()
+    for (const r of byPerson.rows) {
+      const puuid = String(r["participants.puuid"])
+      const { name, tag } = splitRiotId(byId.get(puuid)?.riot_id ?? null, puuid)
+      const cur = acc.get(puuid) ?? { puuid, name, tag, games: 0, byDay: Array(7).fill(0), byBlock: Array(BLOCKS.length).fill(0) }
+      const n = num(r["participants.games"]) ?? 0
+      const hour = Number(r["matches.hour_of_day"])
+      cur.games += n
+      cur.byDay[Number(r["matches.weekday"])] += n
+      const block = BLOCKS.findIndex((b) => hour >= b.from && hour <= b.to)
+      if (block >= 0) cur.byBlock[block] += n
+      acc.set(puuid, cur)
+    }
+    return [...acc.values()].sort((a, b) => b.games - a.games)
+  }, [byPerson.rows, players])
+
+  const queryError = daily.error ?? heat.error ?? byWeekday.error ?? byPerson.error
+  const setWho = (next: Who) => {
+    setWhoState(next)
+    setSlice(null)
+  }
 
 
   const days: DayDatum[] = useMemo(
@@ -141,11 +227,21 @@ export function TimeAnalysis() {
     return { games, wins }
   }, [slice, days, hourly])
 
+  if (who === "tracked" && !scope.trackedCount) {
+    return (
+      <div className="space-y-4">
+        <WhoSwitch who={who} onChange={setWho} trackedCount={scope.trackedCount} disabled={NO_ALL} />
+        <EmptyState>還沒有追蹤任何玩家。到「追蹤對象」頁加人之後，這裡就能看他們的時段。</EmptyState>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-4">
+      <WhoSwitch who={who} onChange={setWho} trackedCount={scope.trackedCount} disabled={NO_ALL} />
       {queryError && <QueryError error={queryError} />}
       <div className="grid gap-3 sm:grid-cols-3">
-        <Kpi label="總場次" value={String(totalGames)} loading={heat.loading} />
+        <Kpi label="總場次" value={String(totalGames)} hint={who === "tracked" ? "每位玩家的每一場各算一次" : undefined} loading={heat.loading} />
         <Kpi
           label="打過的日子"
           value={String(days.length)}
@@ -197,6 +293,21 @@ export function TimeAnalysis() {
           </p>
         )}
       </div>
+
+      {who === "tracked" && (
+        <Panel
+          title="每個人在什麼時候打"
+          caption="一人一列：左邊是星期幾、右邊是四個時段，柱高是佔他自己場次的比例（每個人各自的最高那格頂到滿），下面的數字是場次。合併的圖會被打最多場的人帶著走，分開看才知道誰習慣什麼時候上線、哪些時段湊得齊人"
+        >
+          {byPerson.loading ? (
+            <Skeleton className="h-[260px] w-full" />
+          ) : personRows.length ? (
+            <PersonTimes rows={personRows} />
+          ) : (
+            <EmptyState>這個條件下還沒有資料。</EmptyState>
+          )}
+        </Panel>
+      )}
 
       <Panel title="每天的場次與勝率" caption="折線是累積勝率，虛線是 50%；長條是每天的勝敗場次，上方數字是場次。點一天聚焦">
         {daily.loading ? (
@@ -290,13 +401,15 @@ export function TimeAnalysis() {
           >
             <CubeMatchList
               gameIdKey="matches.game_id"
-              listKey={sliceLabel(slice)}
+              listKey={`${who}|${sliceLabel(slice)}`}
               query={apply({
                 measures: ["participants.games"],
-                dimensions: ["matches.game_id"],
+                dimensions: [who === "tracked" ? "participants.participant_key" : "matches.game_id"],
                 filters: sliceFilters(slice),
                 limit: MAX_GAME_IDS,
               })}
+              rowsToParams={who === "tracked" ? participantRows : undefined}
+              showPlayer={who === "tracked"}
             />
           </Panel>
         </div>

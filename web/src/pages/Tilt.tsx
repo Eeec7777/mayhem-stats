@@ -8,7 +8,7 @@ import { useCube } from "@/hooks/useCube"
 import { MAX_GAME_IDS, num, type CubeRow } from "@/lib/cube"
 import { useFilters } from "@/lib/filters"
 import { useCrumb } from "@/lib/breadcrumb"
-import { useWhoScope, type Who } from "@/lib/who"
+import { participantRows, useWhoScope, type Who } from "@/lib/who"
 import { cn } from "@/lib/utils"
 import { DrillPanel } from "@/components/MatchList"
 import { MIN_GAMES, NO_LIMIT, splitRiotId } from "./shared"
@@ -235,16 +235,6 @@ export function Tilt() {
 
   const dayChart = grain === "stage" ? byStage : byIndex
   const dayBars = grain === "stage" ? stageBars : indexBars
-
-  // 追蹤對象：每一列是「某位玩家的某一場」，是哪幾列由 Cube 用同一組條件查（參賽者鍵），
-  // 不能只給 game_ids——同一場裡另一位追蹤對象的「前一場」可能不是同一個結果，會列出圖上沒算進去的列
-  const participantRows = (rows: CubeRow[]) => {
-    const picks = rows.slice(0, MAX_GAME_IDS).map((r) => {
-      const [, game, pid] = String(r["participants.participant_key"]).split(":")
-      return `${game}:${pid}`
-    })
-    return picks.length ? { params: { puuid: "*", participants: picks.join(",") }, count: picks.length } : null
-  }
 
   const switcher = <WhoSwitch who={who} onChange={setWho} trackedCount={scope.trackedCount} disabled={NO_ALL} />
   if (noTracked) {
