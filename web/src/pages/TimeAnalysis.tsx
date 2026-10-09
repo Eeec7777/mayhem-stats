@@ -52,21 +52,42 @@ const NO_ALL = { all: "每場兩隊十位都算，勝率必然是 50%，時段�
 
 type PersonRow = { puuid: string; name: string; tag: string; games: number; byDay: number[]; byBlock: number[] }
 
-/** 追蹤對象每個人在什麼時候打：一人一列，左邊七天、右邊四時段，柱高是「佔他自己場次的比例」。
- *  合併起來的熱力圖會被打最多場的人帶著走，分開看才知道誰習慣什麼時候上線、哪些時段湊得齊人。 */
-function PersonTimes({ rows }: { rows: PersonRow[] }) {
-  const cell = (n: number, max: number, key: string) => (
-    <div key={key} className="flex flex-col items-center gap-0.5" title={`${n} 場`}>
-      <div className="relative h-6 w-full overflow-hidden rounded-sm bg-muted/40">
-        <span className="absolute inset-x-0 bottom-0 bg-data" style={{ height: `${max ? (100 * n) / max : 0}%` }} />
+/** 追蹤對象每個人在什麼時候打：一人一列，左邊七天、右邊四時段，圓點大小是「佔他自己場次的比例」。
+ *  合併起來的熱力圖會被打最多場的人帶著走，分開看才知道誰習慣什麼時候上線、哪些時段湊得齊人。
+ *
+ *  格子固定大小、不隨容器拉伸：原本用長條，格子被拉成又寬又扁的粗條，高低差看不出來，數字也擠在底下。
+ *  圓點的面積跟比例成正比（半徑取平方根），人眼比較面積，不是直徑；0 場畫成一個空心小點，
+ *  和「有打但很少」分得開。數字放在圓點旁，不放在色塊上，免得每個主題都要重新算對比。 */
+const DOT_MAX = 30
+const DOT_MIN = 6
+
+function Dot({ n, max, label }: { n: number; max: number; label: string }) {
+  const size = n === 0 || !max ? 0 : Math.round(DOT_MIN + (DOT_MAX - DOT_MIN) * Math.sqrt(n / max))
+  return (
+    <div className="flex h-10 flex-col items-center justify-center" title={`${label}　${n} 場`}>
+      <div className="flex size-[30px] items-center justify-center">
+        {n === 0 ? (
+          <span className="size-1.5 rounded-full border border-muted-foreground/40" />
+        ) : (
+          <span className="rounded-full bg-data" style={{ width: size, height: size }} />
+        )}
       </div>
-      <span className="font-mono text-[10px] tabular-nums text-muted-foreground">{n}</span>
+      <span className={`font-mono text-[10px] tabular-nums leading-none ${n === 0 ? "text-muted-foreground/50" : "text-muted-foreground"}`}>{n}</span>
     </div>
   )
-  const grid = "grid grid-cols-[minmax(0,9rem)_repeat(7,minmax(0,1fr))_0.5rem_repeat(4,minmax(0,1.4fr))] items-end gap-x-1.5 gap-y-2"
+}
+
+function PersonTimes({ rows }: { rows: PersonRow[] }) {
+  const grid = "grid grid-cols-[11rem_repeat(7,4rem)_2rem_repeat(4,5.5rem)] items-center gap-x-1"
   return (
     <div className="overflow-x-auto">
-      <div className="min-w-[640px] space-y-2">
+      <div className="w-max min-w-full">
+        <div className={`${grid} mb-1 text-[11px] font-medium text-muted-foreground`}>
+          <span />
+          <span className="col-span-7 border-b pb-0.5 text-center">星期</span>
+          <span />
+          <span className="col-span-4 border-b pb-0.5 text-center">時段</span>
+        </div>
         <div className={`${grid} text-[11px] text-muted-foreground`}>
           <span />
           {WEEKDAYS.map((d) => (
@@ -74,21 +95,27 @@ function PersonTimes({ rows }: { rows: PersonRow[] }) {
           ))}
           <span />
           {BLOCKS.map((b) => (
-            <span key={b.label} className="text-center" title={b.label}>{b.label.split(" ")[0]}</span>
+            <span key={b.label} className="text-center" title={b.label}>
+              {b.label.split(" ")[0]}
+            </span>
           ))}
         </div>
         {rows.map((r) => (
-          <div key={r.puuid} data-testid="person-times-row" className={grid}>
-            <span className="flex min-w-0 flex-col self-center text-sm font-medium">
+          <div key={r.puuid} data-testid="person-times-row" className={`${grid} border-t first:border-t-0`}>
+            <span className="flex min-w-0 flex-col py-1 pr-2 text-sm font-medium">
               <span className="flex min-w-0 items-baseline gap-1">
-                <span className="truncate">{r.name}</span>
+                <span className="truncate" title={`${r.name}${r.tag}`}>{r.name}</span>
                 {r.tag && <span className="shrink-0 text-[11px] font-normal text-muted-foreground">{r.tag}</span>}
               </span>
               <span className="font-mono text-[11px] font-normal text-muted-foreground">{r.games} 場</span>
             </span>
-            {r.byDay.map((n, i) => cell(n, Math.max(...r.byDay), `d${i}`))}
+            {r.byDay.map((n, i) => (
+              <Dot key={`d${i}`} n={n} max={Math.max(...r.byDay)} label={`${r.name} ${WEEKDAYS[i]}`} />
+            ))}
             <span />
-            {r.byBlock.map((n, i) => cell(n, Math.max(...r.byBlock), `b${i}`))}
+            {r.byBlock.map((n, i) => (
+              <Dot key={`b${i}`} n={n} max={Math.max(...r.byBlock)} label={`${r.name} ${BLOCKS[i].label}`} />
+            ))}
           </div>
         ))}
       </div>
@@ -298,7 +325,7 @@ export function TimeAnalysis() {
       {who === "tracked" && (
         <Panel
           title="每個人在什麼時候打"
-          caption="一人一列：左邊是星期幾、右邊是四個時段，柱高是佔他自己場次的比例（每個人各自的最高那格頂到滿），下面的數字是場次。合併的圖會被打最多場的人帶著走，分開看才知道誰習慣什麼時候上線、哪些時段湊得齊人"
+          caption="一人一列：左邊是星期幾、右邊是四個時段，圓點越大代表佔他自己場次的比例越高（每個人各自最高的那格最大，面積成正比），旁邊的數字是場次，空心小點是沒打過。合併的圖會被打最多場的人帶著走，分開看才知道誰習慣什麼時候上線、哪些時段湊得齊人"
         >
           {byPerson.loading ? (
             <Skeleton className="h-[260px] w-full" />

@@ -242,7 +242,7 @@ test.describe("時段頁：看誰的數據", () => {
     for (const [i, mine] of perPerson.entries()) {
       const line = lines.nth(i)
       await expect(line).toContainText(`${mine.length} 場`)
-      const cells = await line.locator("[title$=' 場']").evaluateAll((els) => els.map((e) => Number(e.getAttribute("title")!.replace(" 場", ""))))
+      const cells = await line.locator("[title$=' 場']").evaluateAll((els) => els.map((e) => Number(e.getAttribute("title")!.match(/(\d+) 場$/)![1])))
       expect(cells).toHaveLength(11)
       expect(cells.slice(0, 7), `第 ${i + 1} 列的星期`).toEqual(WEEKDAYS.map((_, wd) => mine.filter((r) => r.wd === wd).length))
       expect(cells.slice(7), `第 ${i + 1} 列的時段`).toEqual(BLOCKS.map((b) => mine.filter((r) => r.h >= b.from && r.h <= b.to).length))
