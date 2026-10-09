@@ -13,6 +13,7 @@ import { MAX_GAME_IDS, iconUrl, num, type CubeRow } from "@/lib/cube"
 import { useFilters, type Drill } from "@/lib/filters"
 import { useCrumb } from "@/lib/breadcrumb"
 import { useNavigate } from "@/lib/nav"
+import { useWhoScope } from "@/lib/who"
 import { cn } from "@/lib/utils"
 import type { MatchRow } from "./Matches"
 import { BLOCKS, MIN_GAMES, NO_LIMIT, WEEKDAYS, round0, round1, round2, toBlocks } from "./shared"
@@ -23,6 +24,8 @@ import { ROLE_SPEC } from "@/lib/roleBasis"
  *  那個 chunk 本來就會在瀏覽器閒下來時預先抓好（App 的 usePrefetchPages）。 */
 const CubeMatchList = lazy(() => import("@/components/MatchList").then((m) => ({ default: m.CubeMatchList })))
 const MatchDetail = lazy(() => import("./Matches").then((m) => ({ default: m.MatchDetail })))
+
+const REF_MEASURES = ["participants.kda", "participants.dpm", "participants.gpm", "participants.kill_participation"]
 
 /** 最近幾場要列幾場；連勝連敗往回數到幾場為止（超過就顯示「20+」） */
 const RECENT_SHOWN = 10
@@ -372,6 +375,12 @@ export function Dashboard() {
     }),
   )
 
+  // 四個打法指標旁邊的參照值：同一組條件（模式、期間、下鑽）下，所有人與追蹤對象的平均。
+  // 沒有校正定位——輔助和射手的 KDA 本來就不同——只拿來看自己大概落在哪，要公平比較看英雄頁的貢獻分數。
+  const everyone = useCube(apply({ measures: REF_MEASURES }, "all"))
+  const crewScope = useWhoScope("tracked")
+  const crew = useCube(crewScope.trackedCount > 1 ? crewScope.q({ measures: REF_MEASURES }) : null)
+
   const queryError = totals.error ?? daily.error ?? champions.error ?? augments.error ?? heat.error ?? roles.error
 
   const row = totals.rows[0] ?? {}
@@ -381,6 +390,14 @@ export function Dashboard() {
   }
   const winrate = num(row["participants.winrate"])
   const games = num(row["participants.games"]) ?? 0
+  const refHint = (key: string, fmt: (n: number) => string, suffix = "") => {
+    if (everyone.loading || crew.loading) return undefined
+    const part = (label: string, r: CubeRow | undefined) => {
+      const v = num(r?.[key])
+      return v === null ? null : `${label} ${fmt(v)}${suffix}`
+    }
+    return [part("全體", everyone.rows[0]), crewScope.trackedCount > 1 ? part("追蹤對象", crew.rows[0]) : null].filter(Boolean).join("・") || undefined
+  }
 
   // useMemo：點某一天會讓整頁重新渲染，每次都給圖表一份新陣列的話，
   // ECharts 會把整份 option 當成新資料再過渡一次（長條會跟著抖一下）
@@ -452,10 +469,10 @@ export function Dashboard() {
 
       {/* 次要數字：打法的總量指標，比勝率次要，縮成一排小卡 */}
       <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
-        <Kpi index={2} label="KDA" value={metric("participants.kda", round2)} loading={totals.loading} />
-        <Kpi index={3} label="每分鐘傷害" value={metric("participants.dpm", round0)} loading={totals.loading} />
-        <Kpi index={4} label="每分鐘經濟" value={metric("participants.gpm", round0)} loading={totals.loading} />
-        <Kpi index={5} label="參團率" value={metric("participants.kill_participation", round1, "%")} loading={totals.loading} />
+        <Kpi index={2} label="KDA" value={metric("participants.kda", round2)} hint={refHint("participants.kda", round2)} loading={totals.loading} />
+        <Kpi index={3} label="每分鐘傷害" value={metric("participants.dpm", round0)} hint={refHint("participants.dpm", round0)} loading={totals.loading} />
+        <Kpi index={4} label="每分鐘經濟" value={metric("participants.gpm", round0)} hint={refHint("participants.gpm", round0)} loading={totals.loading} />
+        <Kpi index={5} label="參團率" value={metric("participants.kill_participation", round1, "%")} hint={refHint("participants.kill_participation", round1, "%")} loading={totals.loading} />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-12">

@@ -147,6 +147,29 @@ test.describe("儀表板", () => {
       )[0]
       await expect(kpi(page, "參團率")).toHaveText(`${Number(r.kp).toFixed(1)}%`)
     })
+
+    test("參照值：每張 KPI 下方列出「全體」與「追蹤對象」的平均，和獨立 SQL 一致", async ({ page }) => {
+      const agg = (where: string) =>
+        sql(
+          `SELECT AVG(p.kills) k, AVG(p.assists) a, AVG(p.deaths) d,
+                  AVG(p.dmg_to_champions * 60.0 / m.game_duration) dpm, AVG(p.gold_earned * 60.0 / m.game_duration) gpm,
+                  AVG((p.kills + p.assists) * 100.0 / NULLIF(p.team_kills, 0)) kp
+             FROM match_participants p JOIN matches m USING (platform_id, game_id) WHERE m.queue_id = 2400 ${where}`,
+        )[0]
+      const all = agg("")
+      const crew = agg("AND p.puuid IN (SELECT puuid FROM accounts WHERE is_me = 1 OR tracked = 1)")
+      const fmt = (r: Record<string, unknown>) => ({
+        KDA: ((Number(r.k) + Number(r.a)) / Number(r.d)).toFixed(2),
+        每分鐘傷害: Math.round(Number(r.dpm)).toLocaleString(),
+        每分鐘經濟: Math.round(Number(r.gpm)).toLocaleString(),
+        參團率: `${Number(r.kp).toFixed(1)}%`,
+      })
+      const a = fmt(all)
+      const c = fmt(crew)
+      for (const label of ["KDA", "每分鐘傷害", "每分鐘經濟", "參團率"] as const) {
+        await expect(card(page, label)).toContainText(`全體 ${a[label]}・追蹤對象 ${c[label]}`)
+      }
+    })
   })
 
   test.describe("每日勝率趨勢", () => {
