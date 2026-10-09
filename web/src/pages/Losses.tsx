@@ -185,7 +185,7 @@ export function Losses() {
   })
   const columns = useMemo(() => columnsFor(who !== "all"), [who])
 
-  // 依分組的下界由短到長排。Cube 回傳的順序不固定（實測「15-20、< 15、20-25」）
+  // 依分組的下界由短到長排。Cube 回傳的順序不固定（實測「15-20、< 15、20-25」，現在的分組是「12-14、< 12、14-16…」）
   const bucketStart = (label: string) => (label.startsWith("<") ? 0 : Number(label.match(/\d+/)?.[0] ?? 999))
   const durationBars: BarDatum[] = byDuration.rows
     .map((r) => ({
@@ -289,7 +289,7 @@ export function Losses() {
       {who !== "all" && (
       <Panel
         title="對局長度與勝率"
-        caption="和上面的「平均局長」是同一件事的分組版。注意因果方向：贏的時候通常推得快，所以短局勝率高多半是結果、不是原因。點一根看那些場次"
+        caption="和上面的「平均局長」是同一件事的分組版，每 2 分鐘一段（大亂鬥多半在 12～22 分鐘內結束，分太粗會把轉折蓋掉）。注意因果方向：贏的時候通常推得快，所以短局勝率高多半是結果、不是原因。點一根看那些場次"
       >
         {byDuration.loading ? (
           <Skeleton className="h-[220px] w-full" />

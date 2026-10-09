@@ -5,7 +5,7 @@ import { mePuuid, sql } from "./db"
 
 const crumbs = (page: Page) => page.locator('nav[aria-label="目前位置"]')
 const card = (page: Page, title: string) => page.locator('[data-slot="card"]', { has: page.getByText(title, { exact: true }) }).first()
-const bucketOf = (s: number) => (s < 900 ? "< 15 分" : s < 1200 ? "15-20 分" : s < 1500 ? "20-25 分" : "25 分以上")
+const bucketOf = (s: number) => (s < 720 ? "< 12 分" : s < 840 ? "12-14 分" : s < 960 ? "14-16 分" : s < 1080 ? "16-18 分" : s < 1200 ? "18-20 分" : s < 1320 ? "20-22 分" : "22 分以上")
 
 /** 勝局／敗局各自的平均（先各自平均再相除的指標由呼叫端組合）。 */
 const byResult = () => {
@@ -110,11 +110,11 @@ test.describe("敗因分析頁：對局長度與勝率", () => {
       [mePuuid()],
     ).map((r) => ({ b: bucketOf(Number(r.dur)), win: Number(r.win) }))
 
-  test("四個長度分組由短到長，勝率和 SQL 一致", async ({ page }) => {
+  test("七個長度分組（每 2 分鐘一段）由短到長，勝率和 SQL 一致", async ({ page }) => {
     const bars = await visibleBars(chart(page))
     // 橫向長條圖的第一個類別畫在最下面，所以 yAxis.data 是反過來的；由上到下讀才是短 → 長
     const labels = bars.map((b) => b.label).reverse()
-    const order = ["< 15 分", "15-20 分", "20-25 分", "25 分以上"]
+    const order = ["< 12 分", "12-14 分", "14-16 分", "16-18 分", "18-20 分", "20-22 分", "22 分以上"]
     expect(labels).toEqual(order.filter((o) => labels.includes(o)))
     for (const b of bars) {
       const g = games().filter((x) => x.b === b.label)
@@ -214,8 +214,9 @@ test.describe("敗因分析頁：看誰的數據", () => {
     const n = sql(
       `SELECT COUNT(*) n FROM match_participants p JOIN matches m USING (platform_id, game_id)
         WHERE m.queue_id = 2400 AND p.puuid IN (SELECT puuid FROM accounts WHERE is_me = 1 OR tracked = 1)
-          AND (CASE WHEN m.game_duration < 900 THEN '< 15 分' WHEN m.game_duration < 1200 THEN '15-20 分'
-                    WHEN m.game_duration < 1500 THEN '20-25 分' ELSE '25 分以上' END) = ?`,
+          AND (CASE WHEN m.game_duration < 720 THEN '< 12 分' WHEN m.game_duration < 840 THEN '12-14 分'
+                    WHEN m.game_duration < 960 THEN '14-16 分' WHEN m.game_duration < 1080 THEN '16-18 分'
+                    WHEN m.game_duration < 1200 THEN '18-20 分' WHEN m.game_duration < 1320 THEN '20-22 分' ELSE '22 分以上' END) = ?`,
       [pick.label],
     )[0].n
     await clickBar(page, chart, pick.label)

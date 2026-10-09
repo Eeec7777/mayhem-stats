@@ -77,7 +77,7 @@ const ORDERED = new Set([
   "participants.death_bucket",
 ])
 
-/** 分組標籤的排序鍵：「< 15 分」排在「15-20 分」前面，「16 次以上」排在「11-15 次」後面。 */
+/** 分組標籤的排序鍵：「< 12 分」排在「12-14 分」前面，「16 次以上」排在「11-15 次」後面。 */
 function orderKey(v: string): number | null {
   const m = v.match(/\d+(\.\d+)?/)
   if (!m) return null
