@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 import { X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -137,6 +137,7 @@ export function MatchList({
   params,
   puuid,
   showPlayer = false,
+  headerExtra,
 }: {
   /** 直接送給 /api/matches 的查詢參數 */
   params: Record<string, string>
@@ -144,6 +145,8 @@ export function MatchList({
   puuid?: string
   /** 每一列不一定是同一個人時，卡片上標出是誰玩的 */
   showPlayer?: boolean
+  /** 卡片標頭右側多放的內容（例如「同場追蹤：A、B」），只在 showPlayer 時有標頭 */
+  headerExtra?: (m: MatchRow) => ReactNode
 }) {
   const [data, setData] = useState<Loaded | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -270,7 +273,7 @@ export function MatchList({
         <div className="text-xs text-muted-foreground">
           共 {total} 場・{wins} 勝 {total - wins} 敗・勝率 {((wins / total) * 100).toFixed(1)}%・點任一場看完整戰報
         </div>
-        <MatchCards rows={matches} onPick={pick} showPlayer={showPlayer} />
+        <MatchCards rows={matches} onPick={pick} showPlayer={showPlayer} headerExtra={headerExtra} />
         <div ref={sentinelRef} />
         {error ? (
           <Button size="sm" variant="outline" className="w-full" onClick={() => { setError(null); loadMore() }}>

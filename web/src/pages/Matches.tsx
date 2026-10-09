@@ -1,10 +1,14 @@
-import { Fragment, useEffect, useState, type CSSProperties } from "react"
+import { Fragment, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react"
 import { ChevronLeft, Coins, Swords } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Panel } from "@/components/primitives"
+import { EmptyState, Panel } from "@/components/primitives"
+import { WhoSwitch } from "@/components/WhoSwitch"
+import { useCube } from "@/hooks/useCube"
+import { useWhoScope, type Who, type WhoScope } from "@/lib/who"
 import { MAX_GAME_IDS, iconUrl, num, type CubeRow } from "@/lib/cube"
+import { NO_LIMIT } from "./shared"
 import { useFilters } from "@/lib/filters"
 import { CubeMatchList, MatchList } from "@/components/MatchList"
 import { RoleChip, RoleLegend } from "@/components/RoleChip"
@@ -50,6 +54,10 @@ export type MatchRow = {
   /** 「和某人同場」的下鑽才有：那個人那場的參賽者編號，卡片上把他的英雄圈出來 */
   with_participant_id?: number | null
 }
+
+/** 對局紀錄只有「目前帳號」與「追蹤對象」：所有人的清單和追蹤對象去重後是同一份
+ *  （每場至少有一位自己或追蹤對象），多一個選項只會讓人以為有差別。 */
+const NO_ALL = { all: "每一場至少有一位你或追蹤對象，所以「追蹤對象」每場只列一張，就已經是資料庫裡的全部場次" }
 
 export type Player = MatchRow & {
   riot_id: string
@@ -558,17 +566,20 @@ export function MatchCards({
   rows,
   onPick,
   showPlayer = false,
+  headerExtra,
 }: {
   rows: MatchRow[]
   onPick: (match: MatchPick) => void
   showPlayer?: boolean
+  /** 標頭多放的內容，見 MatchList */
+  headerExtra?: (m: MatchRow) => ReactNode
 }) {
   const chunks: MatchRow[][] = []
   for (let i = 0; i < rows.length; i += ROLE_CHUNK) chunks.push(rows.slice(i, i + ROLE_CHUNK))
   return (
     <div className="space-y-1.5">
       {chunks.map((chunk, ci) => (
-        <MatchCardChunk key={ci} rows={chunk} offset={ci * ROLE_CHUNK} onPick={onPick} showPlayer={showPlayer} />
+        <MatchCardChunk key={ci} rows={chunk} offset={ci * ROLE_CHUNK} onPick={onPick} showPlayer={showPlayer} headerExtra={headerExtra} />
       ))}
     </div>
   )
@@ -579,11 +590,13 @@ function MatchCardChunk({
   offset,
   onPick,
   showPlayer,
+  headerExtra,
 }: {
   rows: MatchRow[]
   offset: number
   onPick: (match: MatchPick) => void
   showPlayer: boolean
+  headerExtra?: (m: MatchRow) => ReactNode
 }) {
   // 這場的出裝定位：向 Cube 查（見 useBuildRoles）
   const roleOf = useBuildRoles(rows.map(keyOf))
@@ -620,6 +633,7 @@ function MatchCardChunk({
                 {role && <RoleChip role={role} />}
                 <span className="shrink-0 text-muted-foreground">{m.champion_name}</span>
                 <span className="shrink-0 text-muted-foreground"><ContribInline score={score} rank={rank} /></span>
+                {headerExtra?.(m)}
                 <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">{fmtDate(m.game_creation)}</span>
               </div>
             )}
@@ -689,40 +703,106 @@ function MatchCardChunk({
   )
 }
 
+/** 追蹤對象：一場只列一張卡片。每場至少有一位自己或追蹤對象（採集的就是他們的場次），常常好幾位同隊，
+ *  逐人列的話同一場出現好幾次（501 場變成 1397 列）。這裡每場挑一位當主角（優先目前帳號，其次參賽者編號最小的），
+ *  其他同場的追蹤對象列在標頭。是哪幾場、誰在場都由 Cube 用和其他頁同一組條件查，後端不再抄一份。 */
+function TrackedMatches({ scope }: { scope: WhoScope }) {
+  const { account, players, matchParams } = useFilters()
+  const rows = useCube(
+    scope.q({ measures: ["participants.games"], dimensions: ["participants.participant_key", "participants.puuid"], limit: NO_LIMIT }),
+  )
+  const built = useMemo(() => {
+    const nameOf = new Map(players.map((p) => [p.puuid, String(p.riot_id ?? p.puuid.slice(0, 8)).split("#")[0]]))
+    const games = new Map<string, { pid: number; puuid: string }[]>()
+    for (const r of rows.rows) {
+      const [, game, pid] = String(r["participants.participant_key"]).split(":")
+      const list = games.get(game) ?? []
+      list.push({ pid: Number(pid), puuid: String(r["participants.puuid"]) })
+      games.set(game, list)
+    }
+    const picks: string[] = []
+    const others = new Map<string, string[]>()
+    for (const [game, list] of games) {
+      const main = list.find((x) => x.puuid === account?.puuid) ?? [...list].sort((a, b) => a.pid - b.pid)[0]
+      picks.push(`${game}:${main.pid}`)
+      others.set(game, list.filter((x) => x !== main).map((x) => nameOf.get(x.puuid) ?? x.puuid.slice(0, 8)))
+    }
+    return { picks, others }
+  }, [rows.rows, players, account?.puuid])
+
+  if (rows.loading) return <Skeleton className="h-40 w-full" />
+  if (rows.error) return <div className="text-sm text-destructive">{rows.error}</div>
+  if (!built.picks.length) return <EmptyState>這個條件下沒有對局。</EmptyState>
+  const shown = built.picks.slice(0, MAX_GAME_IDS)
+  return (
+    <div className="space-y-2">
+      {built.picks.length > MAX_GAME_IDS && (
+        <p className="text-[11px] text-muted-foreground">
+          符合的條件超過 {MAX_GAME_IDS} 場，這裡只列出其中 {MAX_GAME_IDS} 場。縮小期間或再加一個條件就能看全。
+        </p>
+      )}
+      <MatchList
+        key={shown.length + ":" + shown[0]}
+        params={{ ...matchParams(), puuid: "*", participants: shown.join(",") }}
+        showPlayer
+        headerExtra={(m) => {
+          const others = built.others.get(String(m.game_id)) ?? []
+          return others.length ? (
+            <span className="min-w-0 truncate text-[11px] text-muted-foreground" title={others.join("、")}>
+              ・同場追蹤：{others.join("、")}
+            </span>
+          ) : null
+        }}
+      />
+    </div>
+  )
+}
+
 export function Matches() {
   const { account, matchParams, drills, apply } = useFilters()
+  const [who, setWho] = useState<Who>("account")
+  const scope = useWhoScope(who)
   // 帳號、模式、期間：和其他頁同一組全域條件（原本漏了期間，選「最近 7 天」仍列出全部場次）
   const params = matchParams()
   const drillKey = drills.map((d) => `${d.member}=${d.values.join(",")}`).join("&")
 
   return (
-    <Panel
-      title="近期對戰"
-      caption="由新到舊列出全部場次，捲到底會自動載入更多；點任一場看完整戰報。英雄名稱旁是這場的出裝定位"
-      action={<RoleLegend />}
-    >
-      {!account ? null : drills.length ? (
-        // 有全域下鑽（英雄、增幅……）時，是哪幾場交給 Cube 用同一組條件查，後端不必認得每一種維度
-        <CubeMatchList
-          gameIdKey="matches.game_id"
-          listKey={`${account.puuid}|${drillKey}`}
-          query={apply({
-            measures: ["participants.games"],
-            dimensions: ["matches.game_id"],
-            limit: MAX_GAME_IDS,
-          })}
-        />
-      ) : (
-        // key：換帳號時整個列表重來（清掉開著的戰報與捲動位置）
-        <MatchList key={account.puuid} params={params} puuid={account.puuid} />
-      )}
-      {!account && (
-        <div className="space-y-2">
-          {Array.from({ length: 8 }).map((_, i) => (
-            <Skeleton key={i} className="h-16 w-full" />
-          ))}
-        </div>
-      )}
-    </Panel>
+    <div className="space-y-4">
+      <WhoSwitch who={who} onChange={setWho} trackedCount={scope.trackedCount} disabled={NO_ALL} />
+      <Panel
+        title="近期對戰"
+        caption={
+          who === "tracked"
+            ? "由新到舊，每一場只列一張卡片；同場有好幾位追蹤對象時，卡片上的人是主角（優先是目前帳號），其他人列在標頭。點任一場看完整戰報"
+            : "由新到舊列出全部場次，捲到底會自動載入更多；點任一場看完整戰報。英雄名稱旁是這場的出裝定位"
+        }
+        action={<RoleLegend />}
+      >
+        {!account ? null : who === "tracked" ? (
+          <TrackedMatches scope={scope} />
+        ) : drills.length ? (
+          // 有全域下鑽（英雄、增幅……）時，是哪幾場交給 Cube 用同一組條件查，後端不必認得每一種維度
+          <CubeMatchList
+            gameIdKey="matches.game_id"
+            listKey={`${account.puuid}|${drillKey}`}
+            query={apply({
+              measures: ["participants.games"],
+              dimensions: ["matches.game_id"],
+              limit: MAX_GAME_IDS,
+            })}
+          />
+        ) : (
+          // key：換帳號時整個列表重來（清掉開著的戰報與捲動位置）
+          <MatchList key={account.puuid} params={params} puuid={account.puuid} />
+        )}
+        {!account && (
+          <div className="space-y-2">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <Skeleton key={i} className="h-16 w-full" />
+            ))}
+          </div>
+        )}
+      </Panel>
+    </div>
   )
 }

@@ -290,3 +290,60 @@ test.describe("對局紀錄：跨頁篩選", () => {
     await expect(page.getByText(new RegExp(`共 ${all} 場`))).toBeVisible()
   })
 })
+
+test.describe("對局紀錄：看誰的數據", () => {
+  const whoRadio = (page: Page, name: string) => page.getByRole("radio", { name: new RegExp(name) })
+  /** 自己加追蹤對象的 Mayhem 場次，一場一列（同場好幾位也只算一場）。crew 不會出現在兩隊，所以一場的勝負就是 crew 的勝負。 */
+  const crewMatches = () =>
+    sql(
+      `SELECT m.platform_id, m.game_id, MAX(p.win) AS win, COUNT(*) AS crew_n, MIN(p.participant_id) AS first_pid
+         FROM match_participants p JOIN matches m USING (platform_id, game_id)
+        WHERE m.queue_id = 2400 AND p.puuid IN (SELECT puuid FROM accounts WHERE is_me = 1 OR tracked = 1)
+        GROUP BY m.platform_id, m.game_id ORDER BY m.game_creation DESC`,
+    )
+
+  test.beforeEach(async ({ page }) => {
+    await openPage(page, "matches")
+    await expect(cards(page).first()).toBeVisible()
+  })
+
+  test("「所有人」停用並寫出原因；預設仍是目前帳號", async ({ page }) => {
+    await expect(whoRadio(page, "所有人")).toHaveAttribute("aria-disabled", "true")
+    await expect(page.getByText(/「所有人」不能選：每一場至少有一位你或追蹤對象/)).toBeVisible()
+    await expect(whoRadio(page, "目前帳號")).toHaveAttribute("aria-checked", "true")
+  })
+
+  test("追蹤對象：一場只列一張卡片，總場數與勝敗 = 自己加追蹤對象的不重複場次", async ({ page }) => {
+    const matches = crewMatches()
+    const wins = matches.filter((m) => Number(m.win)).length
+    await whoRadio(page, "追蹤對象").click()
+    await expect(crumbs(page)).toContainText("追蹤對象")
+    await expect(
+      page.getByText(`共 ${matches.length} 場・${wins} 勝 ${matches.length - wins} 敗・勝率 ${((wins / matches.length) * 100).toFixed(1)}%`),
+    ).toBeVisible()
+    // 逐人列會是 1397 列、遠多於場數：卡片數不能超過場數
+    await expect.poll(() => cards(page).count()).toBeGreaterThanOrEqual(20)
+    expect(await cards(page).count()).toBeLessThanOrEqual(matches.length)
+  })
+
+  test("追蹤對象：最新幾場的順序與 SQL 一致，同場有多位時標頭列出「同場追蹤」", async ({ page }) => {
+    const matches = crewMatches()
+    await whoRadio(page, "追蹤對象").click()
+    await expect.poll(() => cards(page).count()).toBeGreaterThanOrEqual(20)
+    for (const [i, m] of matches.slice(0, 20).entries()) {
+      const c = cards(page).nth(i)
+      await expect(c, `第 ${i + 1} 場勝敗`).toContainText(Number(m.win) ? "勝利" : "戰敗")
+      if (Number(m.crew_n) > 1) await expect(c, `第 ${i + 1} 場`).toContainText("同場追蹤")
+      else await expect(c, `第 ${i + 1} 場`).not.toContainText("同場追蹤")
+    }
+  })
+
+  test("切回目前帳號：回到自己的場數、麵包屑清掉", async ({ page }) => {
+    await whoRadio(page, "追蹤對象").click()
+    await expect(crumbs(page)).toContainText("追蹤對象")
+    await whoRadio(page, "目前帳號").click()
+    const { games, wins } = myRecord()
+    await expect(page.getByText(`共 ${games} 場・${wins} 勝 ${games - wins} 敗`)).toBeVisible()
+    await expect(crumbs(page)).toHaveCount(0)
+  })
+})
