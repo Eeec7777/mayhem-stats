@@ -139,3 +139,86 @@ test.describe("敗因分析頁：對局長度與勝率", () => {
     await expect(crumbs(page)).toHaveCount(0)
   })
 })
+
+const whoRadio = (page: Page, name: string) => page.getByRole("radio", { name: new RegExp(name) })
+const csvOf = async (page: Page) => {
+  const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "匯出 CSV" }).click()])
+  return readCsv(await download.path())
+}
+
+/** 勝局／敗局的平均。who：自己加追蹤對象（crew）或所有人（all）。 */
+const byResultOf = (who: "crew" | "all") =>
+  sql(
+    `SELECT p.win, COUNT(*) n, AVG(p.kills) k, AVG(p.dmg_to_champions * 60.0 / m.game_duration) dpm
+       FROM match_participants p JOIN matches m USING (platform_id, game_id)
+      WHERE m.queue_id = 2400 ${who === "crew" ? "AND p.puuid IN (SELECT puuid FROM accounts WHERE is_me = 1 OR tracked = 1)" : ""}
+      GROUP BY p.win`,
+  )
+
+const diffPct = (rows: ReturnType<typeof byResultOf>, key: string) => {
+  const w = Number(rows.find((r) => Number(r.win) === 1)![key])
+  const l = Number(rows.find((r) => Number(r.win) === 0)![key])
+  return ((l - w) / Math.abs(w)) * 100
+}
+
+test.describe("敗因分析頁：看誰的數據", () => {
+  test.beforeEach(async ({ page }) => {
+    await openPage(page, "losses")
+    await expect(gridRows(page).first()).toBeVisible()
+  })
+
+  test("預設多一欄「所有人（敗局相差）」：數字 = 所有參賽者勝局與敗局平均的相對差", async ({ page }) => {
+    const csv = await csvOf(page)
+    const iLabel = csv[0].indexOf("指標")
+    const iRef = csv[0].indexOf("所有人（敗局相差）")
+    expect(iRef).toBeGreaterThan(-1)
+    const all = byResultOf("all")
+    for (const [label, key] of [["我的擊殺", "k"], ["我的每分鐘傷害", "dpm"]] as const) {
+      const r = csv.slice(1).find((x) => x[iLabel] === label)!
+      expect(Number(r[iRef]), label).toBeCloseTo(diffPct(all, key), 3)
+    }
+  })
+
+  test("「所有人」：不列隊內佔比與敵方數字（11 列）、沒有對照欄、不畫對局長度，每場兩隊都算所以勝率 50%", async ({ page }) => {
+    await whoRadio(page, "所有人").click()
+    await expect(crumbs(page)).toContainText("所有人")
+    await expect(page.getByText("11 列", { exact: true })).toBeVisible()
+    const groups = await gridColumn(page, "group")
+    expect(new Set(groups)).toEqual(new Set(["團隊", "個人"]))
+    await expect(page.locator('.ag-header-cell[col-id="refDiff"]')).toHaveCount(0)
+    await expect(page.getByText("對局長度與勝率", { exact: true })).toHaveCount(0)
+    await expect(card(page, "勝率")).toContainText("50.0%")
+    await expect(card(page, "打不動還是被打爆")).toContainText("—")
+    // 數字和獨立計算一致：每場 5 勝 5 敗，所以勝敗場數相等
+    const all = byResultOf("all")
+    await expect(card(page, "勝率")).toContainText(`${all[0].n} 勝 ${all[0].n} 敗`)
+    const csv = await csvOf(page)
+    const iLabel = csv[0].indexOf("指標")
+    const iDiff = csv[0].findIndex((h) => h.startsWith("勝局 vs 敗局"))
+    const kills = csv.slice(1).find((x) => x[iLabel] === "擊殺")!
+    expect(Number(kills[iDiff])).toBeCloseTo(diffPct(all, "k"), 3)
+  })
+
+  test("追蹤對象：指標名稱不再是「我的」，數字 = 自己加追蹤對象的勝局與敗局平均；對局長度下鑽列出每人每場", async ({ page }) => {
+    await whoRadio(page, "追蹤對象").click()
+    await expect(page.getByText("17 列", { exact: true })).toBeVisible()
+    const csv = await csvOf(page)
+    const iLabel = csv[0].indexOf("指標")
+    const iDiff = csv[0].findIndex((h) => h.startsWith("勝局 vs 敗局"))
+    expect(csv.slice(1).some((x) => x[iLabel] === "我的擊殺")).toBe(false)
+    const crew = byResultOf("crew")
+    expect(Number(csv.slice(1).find((x) => x[iLabel] === "擊殺")![iDiff])).toBeCloseTo(diffPct(crew, "k"), 3)
+    // 對局長度下鑽：場次 = 圖上那一格的場數（每位追蹤對象每場一列）
+    const chart = charts(card(page, "對局長度與勝率")).first()
+    const pick = (await visibleBars(chart)).filter((b) => b.value > 0)[0]
+    const n = sql(
+      `SELECT COUNT(*) n FROM match_participants p JOIN matches m USING (platform_id, game_id)
+        WHERE m.queue_id = 2400 AND p.puuid IN (SELECT puuid FROM accounts WHERE is_me = 1 OR tracked = 1)
+          AND (CASE WHEN m.game_duration < 900 THEN '< 15 分' WHEN m.game_duration < 1200 THEN '15-20 分'
+                    WHEN m.game_duration < 1500 THEN '20-25 分' ELSE '25 分以上' END) = ?`,
+      [pick.label],
+    )[0].n
+    await clickBar(page, chart, pick.label)
+    await expect(card(page, `對局長度 ${pick.label} 的每一場`).getByText(`共 ${n} 場`)).toBeVisible()
+  })
+})
