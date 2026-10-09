@@ -1,14 +1,17 @@
 import { useMemo, useState, type CSSProperties } from "react"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Skeleton } from "@/components/ui/skeleton"
 import { EmptyState, Panel } from "@/components/primitives"
 import { DrillPanel, MAX_GAME_IDS } from "@/components/MatchList"
-import { BarChart, type BarDatum } from "@/components/charts"
+import { GapForest } from "@/components/GapForest"
+import { gapOf, reachOf, type GapRow } from "@/lib/gap"
 import { WhoSwitch } from "@/components/WhoSwitch"
 import { useCube } from "@/hooks/useCube"
 import { num, type CubeFilter, type CubeRow } from "@/lib/cube"
 import { useCrumb } from "@/lib/breadcrumb"
 import { usePageWho } from "@/lib/whoState"
-import { useWhoScope, type Who } from "@/lib/who"
+import { participantRows, useWhoScope, type Who } from "@/lib/who"
+import { BUILD_ROLES, NO_LIMIT } from "./shared"
 import { cn } from "@/lib/utils"
 
 // 陣容是「整隊」的屬性，場次一律用隊伍粒度（participants.team_games）：
@@ -52,7 +55,8 @@ const SHRINK = 5
 
 type Cell = { games: number; wins: number }
 /** 聚焦的那一格／那一根長條。key 用來判斷「是不是同一個」（再點一次取消、亮起選中的格子） */
-type Focus = { key: string; label: string; filters: CubeFilter[] }
+/** level：team 是整隊的陣容（隊伍粒度），player 是某人的出裝（參賽者粒度），逐場列表的列法不同 */
+type Focus = { key: string; label: string; filters: CubeFilter[]; level?: "team" | "player" }
 
 /** 麵包屑與列表標題用的文字：「我方前排 2 個」「敵方物理為主」「我方 2 前排・混合」 */
 const sideLabel = (facet: FacetId, side: "我方" | "敵方", value: string) =>
@@ -242,11 +246,44 @@ function Matrix({
   )
 }
 
+/** 「這種陣容下出什麼裝」的陣容分組。和上面不同，這裡問的是「你進場時隊上已經有什麼」，
+ *  所以隊友前排數不含自己（你出坦克，隊友前排數不會自動 +1）；敵方輸出組成看出裝，不看實際打出的傷害。 */
+const BUILD_CONTEXTS = {
+  ally_frontline: { label: "隊友前排數", dim: "comp_context.ally_frontline", buckets: ["0 個", "1 個", "2 個以上"], name: (b: string) => `隊友前排 ${b}` },
+  enemy_frontline: { label: "敵方前排數", dim: "comp_context.enemy_frontline", buckets: ["0 個", "1 個", "2 個", "3 個以上"], name: (b: string) => `敵方前排 ${b}` },
+  enemy_damage_mix: { label: "敵方輸出組成", dim: "comp_context.enemy_damage_mix", buckets: MIX, name: (b: string) => `敵方${b}` },
+} as const
+type BuildContextId = keyof typeof BUILD_CONTEXTS
+
+/** 一邊（我方或敵方）的三種因素，各自是一組森林圖的列 */
+const SIDE_FACETS: FacetId[] = ["front", "mix", "support"]
+
+/** 看得出差別的組，寫成一句話放在面板最上面：使用者先知道「所以呢」，再看圖 */
+function Findings({ items, empty }: { items: { label: string; diff: number }[]; empty: string }) {
+  if (!items.length) return <p className="text-sm text-muted-foreground">{empty}</p>
+  return (
+    <p className="text-sm">
+      看得出差別的：
+      {items.map((x, i) => (
+        <span key={x.label}>
+          {i > 0 && "、"}
+          <b className={x.diff > 0 ? "text-win" : "text-loss"}>
+            {x.label} {x.diff > 0 ? "+" : ""}
+            {x.diff.toFixed(0)}pp
+          </b>
+        </span>
+      ))}
+    </p>
+  )
+}
+
 export function Lineups() {
   const [who, setWhoState] = usePageWho()
   const scope = useWhoScope(who)
   const apply = scope.q
   const [facet, setFacet] = useState<FacetId>("front")
+  const [showMatrix, setShowMatrix] = useState(false)
+  const [buildCtx, setBuildCtx] = useState<BuildContextId>("ally_frontline")
   const [focus, setFocus] = useState<Focus | null>(null)
   const setWho = (next: Who) => {
     setWhoState(next)
@@ -255,36 +292,89 @@ export function Lineups() {
   const pick = (next: Focus) => setFocus((cur) => (cur?.key === next.key ? null : next))
   useCrumb(10, focus?.label ?? null, () => setFocus(null))
 
-  const f = FACETS[facet]
   const unit = who === "account" ? "場" : "隊"
   const noTracked = who === "tracked" && !scope.trackedCount
 
+  // ── 一、什麼陣容比較會贏：陣容是整隊的屬性，用隊伍粒度（一隊只算一次，同隊好幾位追蹤對象也是一隊）
   const overall = useCube(apply({ measures: [GAMES, WINS] }))
   const total = n0(overall.rows[0], GAMES)
   const baseline = total ? (100 * n0(overall.rows[0], WINS)) / total : null
+  const byFacet = {
+    front: useCube(apply({ measures: [GAMES, WINS], dimensions: [FACETS.front.team, FACETS.front.enemy], limit: 10000 })),
+    mix: useCube(apply({ measures: [GAMES, WINS], dimensions: [FACETS.mix.team, FACETS.mix.enemy], limit: 10000 })),
+    support: useCube(apply({ measures: [GAMES, WINS], dimensions: [FACETS.support.team, FACETS.support.enemy], limit: 10000 })),
+  }
+  const sideRows = (id: FacetId, side: "team" | "enemy"): GapRow[] => {
+    const f = FACETS[id]
+    const dim = f[side]
+    return f.buckets.map((b) => {
+      const rows = byFacet[id as "front" | "mix" | "support"].rows.filter((r) => r[dim] === b)
+      return {
+        key: `${id}|${side}|${b}`,
+        label: id === "front" ? `前排 ${b}` : b,
+        games: rows.reduce((a, r) => a + n0(r, GAMES), 0),
+        wins: rows.reduce((a, r) => a + n0(r, WINS), 0),
+      }
+    })
+  }
+  // 所有人模式下兩隊都算，敵方那一邊就是我方的鏡像（A 打 B 的勝率 + B 打 A 的 = 100%），只畫一邊
+  const sides: ("team" | "enemy")[] = who === "all" ? ["team"] : ["team", "enemy"]
+  const allSideRows = sides.flatMap((s) => SIDE_FACETS.flatMap((id) => sideRows(id, s)))
+  const sideReach = baseline === null ? 20 : reachOf(allSideRows, baseline)
+  const sideFindings =
+    baseline === null
+      ? []
+      : sides.flatMap((s) =>
+          SIDE_FACETS.flatMap((id) =>
+            sideRows(id, s)
+              .map((r) => ({ r, g: gapOf(r, baseline) }))
+              .filter((x) => x.g.clear)
+              .map((x) => ({ label: sideLabel(id, s === "team" ? "我方" : "敵方", x.r.key.split("|")[2]), diff: x.g.diff })),
+          ),
+        )
+  const sideLoading = overall.loading || byFacet.front.loading || byFacet.mix.loading || byFacet.support.loading
 
-  const matrix = useCube(apply({ measures: [GAMES, WINS], dimensions: [f.team, f.enemy], limit: 10000 }))
-  const mineByType = useCube(apply({ measures: [GAMES, WINS], dimensions: [FACETS.comp.team], limit: 100 }))
-  const theirsByType = useCube(apply({ measures: [GAMES, WINS], dimensions: [FACETS.comp.enemy], limit: 100 }))
-  const bars = (rows: CubeRow[], dim: string): BarDatum[] =>
-    rows
-      .map((r) => ({ label: String(r[dim]), value: wr({ games: n0(r, GAMES), wins: n0(r, WINS) }) ?? 0, games: n0(r, GAMES) }))
-      .sort((a, b) => b.value - a.value || b.games - a.games)
+  // ── 二、對陣矩陣（細看）
+  const matrix = byFacet[facet as "front" | "mix" | "support"]
 
-  // 逐場列表。只看一個帳號：一場就是一列，直接用 game_ids。
-  // 追蹤對象／所有人：一格要列的是「那一隊」，但同一場另一隊的人也在 game_ids 裡。
-  // 改成向 Cube 要這一格的參賽者，每隊挑一位（編號最小的）當代表，用 participants 精準列出；
-  // 列數因此等於格子上的隊伍數。
-  const drillQuery = focus
-    ? who === "account"
+  // ── 三、這種陣容下出什麼裝：每個人自己的出裝，用參賽者粒度
+  const ctx = BUILD_CONTEXTS[buildCtx]
+  const playerOverall = useCube(apply({ measures: ["participants.games", "participants.wins"] }))
+  const pGames = n0(playerOverall.rows[0], "participants.games")
+  const playerBase = pGames ? (100 * n0(playerOverall.rows[0], "participants.wins")) / pGames : null
+  const builds = useCube(
+    apply({ measures: ["participants.games", "participants.wins"], dimensions: ["builds.build_role", ctx.dim], limit: NO_LIMIT }),
+  )
+  const buildRows = (bucket: string): GapRow[] =>
+    BUILD_ROLES.map((role) => {
+      const r = builds.rows.find((x) => x["builds.build_role"] === role && x[ctx.dim] === bucket)
+      return { key: `build|${buildCtx}|${bucket}|${role}`, label: role, games: n0(r, "participants.games"), wins: n0(r, "participants.wins") }
+    })
+  const allBuildRows = ctx.buckets.flatMap((b) => buildRows(b))
+  const buildReach = playerBase === null ? 20 : reachOf(allBuildRows, playerBase)
+  const buildFindings =
+    playerBase === null
+      ? []
+      : ctx.buckets.flatMap((b) =>
+          buildRows(b)
+            .map((r) => ({ r, g: gapOf(r, playerBase) }))
+            .filter((x) => x.g.clear)
+            .map((x) => ({ label: `${ctx.name(b)}時出${x.r.label}`, diff: x.g.diff })),
+        )
+
+  // 逐場列表。陣容（隊伍粒度）：只看一個帳號時一場一列，直接用 game_ids；
+  // 追蹤對象／所有人時同一場另一隊的人也在 game_ids 裡，改向 Cube 要這一格的參賽者，每隊挑一位（編號最小的）當代表。
+  // 出裝（參賽者粒度）：每一列就是「那個人那一場」，追蹤對象／所有人時用參賽者鍵列出圖上算進去的那幾列。
+  const drillQuery = !focus
+    ? null
+    : who === "account"
       ? apply({ measures: [GAMES], dimensions: ["matches.game_id"], filters: focus.filters, limit: MAX_GAME_IDS })
       : apply({
           measures: [GAMES],
-          dimensions: ["participants.participant_key", "participants.team_side"],
+          dimensions: focus.level === "player" ? ["participants.participant_key"] : ["participants.participant_key", "participants.team_side"],
           filters: focus.filters,
-          limit: MAX_GAME_IDS * 5,
+          limit: focus.level === "player" ? MAX_GAME_IDS : MAX_GAME_IDS * 5,
         })
-    : null
   const oneMemberPerTeam = (rows: CubeRow[]) => {
     const best = new Map<string, [number, number]>()
     for (const r of rows) {
@@ -297,6 +387,21 @@ export function Lineups() {
     return picks.length ? { params: { puuid: "*", participants: picks.map(([g, p]) => `${g}:${p}`).join(",") }, count: picks.length } : null
   }
 
+  const pickSide = (row: GapRow) => {
+    const [id, side, value] = row.key.split("|") as [FacetId, "team" | "enemy", string]
+    pick({ ...sideFocus(id, side, value), key: row.key })
+  }
+  const pickBuild = (bucket: string) => (row: GapRow) =>
+    pick({
+      key: row.key,
+      label: `${ctx.name(bucket)}・${row.label}`,
+      filters: [eq(ctx.dim, bucket), eq("builds.build_role", row.label)],
+      level: "player",
+    })
+
+  const sideTitle = (s: "team" | "enemy") => (who === "all" ? "一隊的陣容" : s === "team" ? `我方（含${who === "account" ? "你" : "那位玩家"}自己）` : "敵方")
+  const facetTitle: Record<FacetId, string> = { front: "前排數", mix: "輸出組成", support: "輔助", comp: "陣容類型" }
+
   return (
     <div className="space-y-4">
       <WhoSwitch who={who} onChange={setWho} trackedCount={scope.trackedCount} />
@@ -305,33 +410,131 @@ export function Lineups() {
       ) : (
         <>
           <Panel
-            title="陣容對陣"
-            caption={`列是我方（含${who === "account" ? "你" : "那位玩家"}自己）的陣容、欄是敵方的陣容，每格是那種對陣下的勝率。顏色和整體 ${baseline === null ? "—" : `${baseline.toFixed(1)}%`} 比，場次少的格子顏色會變淡。最右一欄、最下一列是合計。點任一格列出那幾場${
-              who === "all" ? "。「所有人」是每一場的兩隊都算，所以矩陣對稱：A 打 B 的勝率 + B 打 A 的勝率 = 100%，對角線是 50%" : ""
+            title="什麼陣容比較會贏"
+            caption={`每一列是一種陣容，點是那種陣容的勝率比整體 ${baseline === null ? "—" : `${baseline.toFixed(1)}%`} 高或低幾個百分點，線是 95% 區間。只有區間整段在整體的同一邊才上色，灰色代表還分不出是陣容還是運氣。${
+              who === "account" ? "" : "一隊只算一次（同隊好幾位追蹤對象也是一隊）。"
+            }${who === "all" ? "所有人模式下兩隊都算，敵方就是我方的鏡像，所以只畫一邊。" : ""}點一列看那些場次`}
+          >
+            {sideLoading || baseline === null ? (
+              <Skeleton className="h-[420px] w-full" />
+            ) : !total ? (
+              <EmptyState>這個條件下還沒有對局。</EmptyState>
+            ) : (
+              <div className="reveal space-y-4">
+                <Findings items={sideFindings} empty="目前沒有任何一種陣容看得出差別：差距都還在樣本誤差內，再累積一些場次再看。" />
+                <div className={cn("grid gap-x-8 gap-y-4", sides.length > 1 && "lg:grid-cols-2")}>
+                  {sides.map((s) => (
+                    <div key={s} className="space-y-2">
+                      <div className="text-sm font-semibold">{sideTitle(s)}</div>
+                      {SIDE_FACETS.map((id, i) => (
+                        <div key={id}>
+                          <div className="mb-0.5 text-[11px] font-medium text-muted-foreground">{facetTitle[id]}</div>
+                          <GapForest rows={sideRows(id, s)} baseline={baseline} reach={sideReach} unit={unit} selected={focus?.key} onPick={pickSide} showAxis={i === 0} />
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+                <p className="text-[11px] leading-relaxed text-muted-foreground">
+                  前排＝出裝是坦克、AD 鬥士或 AP 鬥士的人。輸出組成看出裝定位：物理（AD 鬥士／輸出／刺客）比魔法（AP 鬥士／輸出／刺客）多 2 人以上是「物理為主」，
+                  反過來是「魔法為主」，其餘「混合」。出裝定位依終場裝備判斷，太早結束沒成形的不算任何一類。
+                  這是「出現過這種陣容的場次」，不是因果：前排多的一方也可能是因為打得久、裝備出得齊。
+                </p>
+              </div>
+            )}
+          </Panel>
+
+          <Panel
+            title="這種陣容下出什麼裝"
+            caption={`選一種陣容分組，每一欄是一種情況，列是出裝定位，點是那樣出的勝率比${who === "account" ? "你" : ""}整體 ${playerBase === null ? "—" : `${playerBase.toFixed(1)}%`} 高或低幾個百分點。隊友前排數不含自己（問的是你進場時隊上已經有什麼）。一個人幾百場攤到這麼多格，大部分會是灰色——那是誠實的「還看不出來」，不是沒有差別。點一列看那些場次`}
+            action={
+              <ToggleGroup type="single" size="sm" variant="outline" value={buildCtx} onValueChange={(v) => {
+                if (!v) return
+                setBuildCtx(v as BuildContextId)
+                setFocus(null)
+              }}>
+                {(Object.keys(BUILD_CONTEXTS) as BuildContextId[]).map((k) => (
+                  <ToggleGroupItem key={k} value={k}>
+                    {BUILD_CONTEXTS[k].label}
+                  </ToggleGroupItem>
+                ))}
+              </ToggleGroup>
+            }
+          >
+            {builds.loading || playerOverall.loading || playerBase === null ? (
+              <Skeleton className="h-[300px] w-full" />
+            ) : (
+              <div className="reveal space-y-3">
+                <Findings items={buildFindings} empty="這種分組下還沒有看得出差別的出裝。" />
+                <div className={cn("grid gap-x-8 gap-y-4 md:grid-cols-2", ctx.buckets.length === 3 ? "lg:grid-cols-3" : "xl:grid-cols-4")}>
+                  {ctx.buckets.map((b) => {
+                    const rows = buildRows(b)
+                    const n = rows.reduce((a, r) => a + r.games, 0)
+                    return (
+                      <div key={b} data-testid="build-context">
+                        <div className="mb-1 flex items-baseline justify-between text-sm font-semibold">
+                          {ctx.name(b)}
+                          <span className="font-mono text-[11px] font-normal text-muted-foreground">{n} 場</span>
+                        </div>
+                        <GapForest rows={rows} baseline={playerBase} reach={buildReach} selected={focus?.key} onPick={pickBuild(b)} labelWidth="4.5rem" />
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+          </Panel>
+
+          {focus && (
+            <DrillPanel
+              title={focus.label}
+              gameIdKey="matches.game_id"
+              query={drillQuery}
+              showPlayer={who !== "account"}
+              rowsToParams={who === "account" ? undefined : focus.level === "player" ? participantRows : oneMemberPerTeam}
+              onClose={() => setFocus(null)}
+            />
+          )}
+
+          <Panel
+            title="細看：我方 × 敵方對陣"
+            caption={`列是我方的陣容、欄是敵方的陣容，每格是那種對陣下的勝率。格子多、每格場次少，適合找特定組合，不適合下結論。點任一格列出那幾場${
+              who === "all" ? "。所有人模式下矩陣對稱：A 打 B 的勝率 + B 打 A 的勝率 = 100%" : ""
             }`}
             action={
-              <div role="radiogroup" aria-label="比較的面向" className="flex shrink-0 rounded-lg border bg-muted/40 p-0.5">
-                {(Object.keys(FACETS) as FacetId[]).map((id) => (
-                  <button
-                    key={id}
-                    role="radio"
-                    aria-checked={facet === id}
-                    onClick={() => {
-                      setFacet(id)
-                      setFocus(null)
-                    }}
-                    className={cn(
-                      "rounded-md px-2.5 py-1 text-xs font-medium whitespace-nowrap transition",
-                      facet === id ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                    )}
-                  >
-                    {FACETS[id].label}
-                  </button>
-                ))}
+              <div className="flex items-center gap-2">
+                {showMatrix && (
+                  <div role="radiogroup" aria-label="比較的面向" className="flex shrink-0 rounded-lg border bg-muted/40 p-0.5">
+                    {SIDE_FACETS.map((id) => (
+                      <button
+                        key={id}
+                        role="radio"
+                        aria-checked={facet === id}
+                        onClick={() => {
+                          setFacet(id)
+                          setFocus(null)
+                        }}
+                        className={cn(
+                          "rounded-md px-2.5 py-1 text-xs font-medium whitespace-nowrap transition",
+                          facet === id ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                        )}
+                      >
+                        {FACETS[id].label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowMatrix((v) => !v)}
+                  className="rounded-md border px-2.5 py-1 text-xs font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                >
+                  {showMatrix ? "收起" : "展開矩陣"}
+                </button>
               </div>
             }
           >
-            {matrix.loading || overall.loading ? (
+            {!showMatrix ? null : matrix.loading || overall.loading ? (
               <Skeleton className="h-[260px] w-full" />
             ) : matrix.error ? (
               <div className="text-sm text-destructive">{matrix.error}</div>
@@ -342,62 +545,7 @@ export function Lineups() {
                 <Matrix facet={facet} rows={matrix.rows} baseline={baseline} unit={unit} focus={focus} onPick={pick} />
               </div>
             )}
-            <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-              前排＝出裝是坦克、AD 鬥士或 AP 鬥士的人。輸出組成看出裝定位：物理（AD 鬥士／輸出／刺客）比魔法（AP 鬥士／輸出／刺客）多 2 人以上是「物理為主」，
-              反過來是「魔法為主」，其餘「混合」。出裝定位依終場裝備判斷，太早結束沒成形的不算任何一類。
-              這是「出現過這種陣容的場次」，不是因果：前排多的一方也可能是因為打得久、裝備出得齊。
-            </p>
           </Panel>
-
-          {focus && (
-            <DrillPanel
-              title={focus.label}
-              gameIdKey="matches.game_id"
-              query={drillQuery}
-              showPlayer={who !== "account"}
-              rowsToParams={who === "account" ? undefined : oneMemberPerTeam}
-              onClose={() => setFocus(null)}
-            />
-          )}
-
-          <div className="grid gap-4 lg:grid-cols-2">
-            <Panel
-              title="我方陣容類型"
-              caption="前排數 × 輸出組成。長條末端是場次（追蹤對象、所有人模式下一隊算一場）；顏色和整體勝率比，場次少的往平均收斂。點長條列出那幾場"
-              index={1}
-            >
-              {mineByType.loading ? (
-                <Skeleton className="h-[320px] w-full" />
-              ) : (
-                <BarChart
-                  data={bars(mineByType.rows, FACETS.comp.team)}
-                  suffix="%"
-                  showGames
-                  baseline={baseline ?? undefined}
-                  selected={focus?.key.startsWith("comp|team|") ? focus.key.slice("comp|team|".length) : null}
-                  onPick={(label) => pick(sideFocus("comp", "team", label))}
-                />
-              )}
-            </Panel>
-            <Panel
-              title="遇到的敵方陣容類型"
-              caption="對上這種敵方陣容時（不論我方）的勝率。點長條列出那幾場"
-              index={2}
-            >
-              {theirsByType.loading ? (
-                <Skeleton className="h-[320px] w-full" />
-              ) : (
-                <BarChart
-                  data={bars(theirsByType.rows, FACETS.comp.enemy)}
-                  suffix="%"
-                  showGames
-                  baseline={baseline ?? undefined}
-                  selected={focus?.key.startsWith("comp|enemy|") ? focus.key.slice("comp|enemy|".length) : null}
-                  onPick={(label) => pick(sideFocus("comp", "enemy", label))}
-                />
-              )}
-            </Panel>
-          </div>
         </>
       )}
     </div>

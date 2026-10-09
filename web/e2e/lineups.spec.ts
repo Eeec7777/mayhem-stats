@@ -1,6 +1,6 @@
-import type { Page } from "@playwright/test"
+import type { Locator, Page } from "@playwright/test"
 import { test, expect } from "./fixtures"
-import { charts, clickBar, openPage, ready, visibleBars } from "./helpers"
+import { openPage, ready } from "./helpers"
 import { mePuuid, sql } from "./db"
 
 const crumbs = (page: Page) => page.locator('nav[aria-label="目前位置"]')
@@ -48,21 +48,145 @@ const tally = <T,>(rows: T[], key: (r: T) => string, win: (r: T) => number) => {
   return m
 }
 
-test.describe("陣容頁：對陣矩陣", () => {
+/** 森林圖的一列（GapForest）：data-games / data-wins 是那一組的場次與勝場 */
+const gapRow = (scope: Locator, label: string) => scope.getByTestId("gap-row").filter({ has: scope.page().getByText(label, { exact: true }) })
+const sidePanel = (page: Page) => page.locator('[data-slot="card"]', { has: page.getByText("什麼陣容比較會贏", { exact: true }) })
+const buildPanel = (page: Page) => page.locator('[data-slot="card"]', { has: page.getByText("這種陣容下出什麼裝", { exact: true }) })
+/** 一邊（我方／敵方）的那一欄 */
+const sideColumn = (page: Page, title: RegExp) => sidePanel(page).locator("div.space-y-2", { has: page.getByText(title) }).first()
+const expandMatrix = async (page: Page) => {
+  await page.getByRole("button", { name: "展開矩陣" }).click()
+  await expect(matrix(page)).toBeVisible()
+}
+
+async function expectRow(row: Locator, v: { n: number; w: number } | undefined, label: string) {
+  await expect(row, label).toHaveAttribute("data-games", String(v?.n ?? 0))
+  await expect(row, label).toHaveAttribute("data-wins", String(v?.w ?? 0))
+}
+
+test.describe("陣容頁：什麼陣容比較會贏", () => {
   test.beforeEach(async ({ page }) => {
     await openPage(page, "lineups")
-    await expect(matrix(page)).toBeVisible()
+    await expect(sidePanel(page).getByTestId("gap-row").first()).toBeVisible()
   })
 
-  test("四種面向：前排數（預設）、輸出組成、輔助、陣容類型", async ({ page }) => {
+  test("我方與敵方各三組（前排數、輸出組成、輔助），每一列的場次與勝場和獨立 SQL 一致", async ({ page }) => {
+    const games = lineupGames()
+    const mine = sideColumn(page, /^我方（含你自己）$/)
+    const theirs = sideColumn(page, /^敵方$/)
+    for (const [b, v] of tally(games, (g) => g.mf, (g) => g.win)) await expectRow(gapRow(mine, `前排 ${b}`), v, `我方前排 ${b}`)
+    for (const [b, v] of tally(games, (g) => g.ef, (g) => g.win)) await expectRow(gapRow(theirs, `前排 ${b}`), v, `敵方前排 ${b}`)
+    for (const [b, v] of tally(games, (g) => g.mm, (g) => g.win)) await expectRow(gapRow(mine, b), v, `我方${b}`)
+    for (const [b, v] of tally(games, (g) => g.em, (g) => g.win)) await expectRow(gapRow(theirs, b), v, `敵方${b}`)
+    // 每一組加總 = 總場次
+    const front = await mine.getByTestId("gap-row").evaluateAll((els) => els.slice(0, 4).reduce((a, e) => a + Number(e.getAttribute("data-games")), 0))
+    expect(front).toBe(games.length)
+  })
+
+  test("說明文字：整體勝率與前排的定義；最上面一句寫出看得出差別的組（或寫明目前沒有）", async ({ page }) => {
+    const games = lineupGames()
+    const base = (100 * games.reduce((a, g) => a + g.win, 0)) / games.length
+    await expect(sidePanel(page).getByText(new RegExp(`比整體 ${base.toFixed(1)}% 高或低`))).toBeVisible()
+    await expect(page.getByText(/前排＝出裝是坦克、AD 鬥士或 AP 鬥士的人/)).toBeVisible()
+    await expect(sidePanel(page).getByText(/^看得出差別的：|^目前沒有任何一種陣容看得出差別/)).toBeVisible()
+  })
+
+  test("點一列 → 列出那種陣容的每一場，場次數一致、麵包屑多一層、列亮起；再點取消", async ({ page }) => {
+    const [b, v] = [...tally(lineupGames(), (g) => g.mf, (g) => g.win)].sort((x, y) => y[1].n - x[1].n)[0]
+    const row = gapRow(sideColumn(page, /^我方（含你自己）$/), `前排 ${b}`)
+    await row.click()
+    const drill = page.locator('[data-slot="card"]', { has: page.getByText(`我方前排 ${b} 的每一場`) })
+    await expect(drill.getByText(`共 ${v.n} 場`)).toBeVisible()
+    await expect(crumbs(page)).toContainText(`我方前排 ${b}`)
+    await expect(row).toHaveClass(/ring-primary/)
+    await row.click()
+    await expect(drill).toHaveCount(0)
+    await expect(crumbs(page)).toHaveCount(0)
+  })
+})
+
+test.describe("陣容頁：這種陣容下出什麼裝", () => {
+  test.beforeEach(async ({ page }) => {
+    await openPage(page, "lineups")
+    await expect(buildPanel(page).getByTestId("gap-row").first()).toBeVisible()
+  })
+
+  /** 自己每場的出裝定位與隊友前排數（不含自己）、敵方前排數 */
+  const myBuilds = () =>
+    sql(
+      `WITH g AS (
+         SELECT p.platform_id, p.game_id, p.team_id, p.participant_id, p.win, b.build_role AS role
+           FROM match_participants p JOIN matches m USING (platform_id, game_id) JOIN mat_builds b ON b.participant_rowid = p.rowid
+          WHERE p.puuid = ? AND m.queue_id = 2400)
+       SELECT g.role, g.win,
+              (SELECT COUNT(*) FROM match_participants q JOIN mat_builds b ON b.participant_rowid = q.rowid
+                WHERE q.platform_id = g.platform_id AND q.game_id = g.game_id AND q.team_id = g.team_id AND q.participant_id <> g.participant_id
+                  AND (b.build_role = '坦克' OR b.build_role LIKE '%鬥士')) AS ally_front,
+              (SELECT COUNT(*) FROM match_participants q JOIN mat_builds b ON b.participant_rowid = q.rowid
+                WHERE q.platform_id = g.platform_id AND q.game_id = g.game_id AND q.team_id <> g.team_id
+                  AND (b.build_role = '坦克' OR b.build_role LIKE '%鬥士')) AS enemy_front
+         FROM g`,
+      [mePuuid()],
+    ).map((r) => ({ role: String(r.role), win: Number(r.win), af: Number(r.ally_front), ef: Number(r.enemy_front) }))
+
+  test("預設「隊友前排數」：三欄（0 個、1 個、2 個以上），每一格的場次與勝場和 SQL 一致", async ({ page }) => {
+    await expect(buildPanel(page).getByRole("radio", { name: "隊友前排數" })).toHaveAttribute("aria-checked", "true")
+    const cols = buildPanel(page).getByTestId("build-context")
+    await expect(cols).toHaveCount(3)
+    const b2 = (n: number) => (n >= 2 ? "2 個以上" : `${n} 個`)
+    const cells = tally(myBuilds().filter((r) => r.role !== "未成形"), (r) => `${b2(r.af)}|${r.role}`, (r) => r.win)
+    for (const [i, b] of ["0 個", "1 個", "2 個以上"].entries()) {
+      const col = cols.nth(i)
+      await expect(col).toContainText(`隊友前排 ${b}`)
+      for (const role of ["坦克", "AD 鬥士", "AD 刺客", "AD 輸出", "AP 輸出", "AP 刺客", "AP 鬥士", "輔助"]) {
+        await expectRow(gapRow(col, role), cells.get(`${b}|${role}`), `隊友前排 ${b}・${role}`)
+      }
+    }
+  })
+
+  test("切到「敵方前排數」：四欄，每欄加總 = 那種敵方前排數的場次", async ({ page }) => {
+    await buildPanel(page).getByRole("radio", { name: "敵方前排數" }).click()
+    const cols = buildPanel(page).getByTestId("build-context")
+    await expect(cols).toHaveCount(4)
+    const rows = myBuilds().filter((r) => r.role !== "未成形")
+    for (const [i, b] of ["0 個", "1 個", "2 個", "3 個以上"].entries()) {
+      const n = rows.filter((r) => bucket(r.ef) === b).length
+      await expect(cols.nth(i)).toContainText(`${n} 場`)
+    }
+  })
+
+  test("三種分組：隊友前排數、敵方前排數、敵方輸出組成（不再有用實際傷害算的「傷害類型」）", async ({ page }) => {
+    await expect(buildPanel(page).getByRole("radio")).toHaveText(["隊友前排數", "敵方前排數", "敵方輸出組成"])
+  })
+
+  test("點一格 → 列出那種情況下那樣出裝的每一場", async ({ page }) => {
+    const b2 = (n: number) => (n >= 2 ? "2 個以上" : `${n} 個`)
+    const cells = tally(myBuilds(), (r) => `${b2(r.af)}|${r.role}`, (r) => r.win)
+    const [key, v] = [...cells].filter(([k]) => !k.endsWith("未成形")).sort((x, y) => y[1].n - x[1].n)[0]
+    const [b, role] = key.split("|")
+    const col = buildPanel(page).getByTestId("build-context").filter({ hasText: `隊友前排 ${b}` })
+    await gapRow(col, role).click()
+    const drill = page.locator('[data-slot="card"]', { has: page.getByText(`隊友前排 ${b}・${role} 的每一場`) })
+    await expect(drill.getByText(`共 ${v.n} 場`)).toBeVisible()
+  })
+})
+
+test.describe("陣容頁：細看對陣矩陣", () => {
+  test.beforeEach(async ({ page }) => {
+    await openPage(page, "lineups")
+    await expandMatrix(page)
+  })
+
+  test("預設收起，展開後三種面向：前排數（預設）、輸出組成、輔助", async ({ page }) => {
     const group = page.getByRole("radiogroup", { name: "比較的面向" })
-    await expect(group.getByRole("radio")).toHaveText(["前排數", "輸出組成", "輔助", "陣容類型"])
+    await expect(group.getByRole("radio")).toHaveText(["前排數", "輸出組成", "輔助"])
     await expect(facetRadio(page, "前排數")).toHaveAttribute("aria-checked", "true")
+    await page.getByRole("button", { name: "收起" }).click()
+    await expect(page.locator("table")).toHaveCount(0)
   })
 
   test("前排數矩陣：每一格的場次、勝率和獨立 SQL 逐格一致", async ({ page }) => {
-    const games = lineupGames()
-    const cells = tally(games, (g) => `${g.mf}|${g.ef}`, (g) => g.win)
+    const cells = tally(lineupGames(), (g) => `${g.mf}|${g.ef}`, (g) => g.win)
     expect(cells.size).toBeGreaterThan(3)
     for (const [key, v] of cells) {
       const [m, e] = key.split("|")
@@ -87,7 +211,6 @@ test.describe("陣容頁：對陣矩陣", () => {
 
   test("輸出組成矩陣：物理為主／混合／魔法為主，逐格和 SQL 一致", async ({ page }) => {
     await facetRadio(page, "輸出組成").click()
-    await expect(facetRadio(page, "輸出組成")).toHaveAttribute("aria-checked", "true")
     const cells = tally(lineupGames(), (g) => `${g.mm}|${g.em}`, (g) => g.win)
     for (const [key, v] of cells) {
       const [m, e] = key.split("|")
@@ -95,114 +218,33 @@ test.describe("陣容頁：對陣矩陣", () => {
     }
   })
 
-  test("輔助面向：有輔助／沒有輔助兩種", async ({ page }) => {
-    await facetRadio(page, "輔助").click()
-    await expect(matrix(page).locator("thead")).toContainText("沒有輔助")
-    await expect(matrix(page).locator("tbody th").first()).toHaveText(/有輔助|沒有輔助/)
-  })
-
-  test("陣容類型面向：沒出現過的類型整列整欄省略，列標題格式「N 前排・混合」", async ({ page }) => {
-    await facetRadio(page, "陣容類型").click()
-    await expect(matrix(page).locator("tbody th").nth(2)).toBeVisible()
-    const labels = await matrix(page).locator("tbody th").allInnerTexts()
-    expect(labels.length).toBeGreaterThan(2)
-    expect(labels.length).toBeLessThanOrEqual(13) // 12 種 + 合計列
-    for (const l of labels.slice(0, -1)) expect(l).toMatch(/^(0|1|2|3\+) 前排・(物理為主|混合|魔法為主)$/)
-  })
-
-  test("點一格 → 列出那幾場，標題與場次數和格子一致，格子亮起、麵包屑多一層；再點取消", async ({ page }) => {
-    const cells = tally(lineupGames(), (g) => `${g.mf}|${g.ef}`, (g) => g.win)
-    const [key, v] = [...cells].sort((a, b) => b[1].n - a[1].n)[0]
+  test("點一格 → 列出那幾場，標題與場次數和格子一致；切換面向清掉聚焦", async ({ page }) => {
+    const [key, v] = [...tally(lineupGames(), (g) => `${g.mf}|${g.ef}`, (g) => g.win)].sort((a, b) => b[1].n - a[1].n)[0]
     const [m, e] = key.split("|")
-    const btn = cell(page, m, e)
-    await btn.click()
+    await cell(page, m, e).click()
     const title = `我方前排 ${m} × 敵方前排 ${e}`
     const drill = page.locator('[data-slot="card"]', { has: page.getByText(`${title} 的每一場`) })
-    await expect(drill).toBeVisible()
     await expect(drill.getByText(`共 ${v.n} 場`)).toBeVisible()
-    await expect(drill.getByText(new RegExp(`${v.w} 勝 ${v.n - v.w} 敗`))).toBeVisible()
     await expect(crumbs(page)).toContainText(title)
-    await expect(btn).toHaveClass(/ring-2/)
-    await btn.click()
-    await expect(drill).toHaveCount(0)
-    await expect(crumbs(page)).toHaveCount(0)
-  })
-
-  test("點合計格（只看一邊）→ 列出我方這種前排數的所有場次", async ({ page }) => {
-    const mine = tally(lineupGames(), (g) => g.mf, (g) => g.win)
-    const [m, v] = [...mine].sort((a, b) => b[1].n - a[1].n)[0]
-    await matrix(page).locator(`button[title^="我方 ${m}（不論敵方）"]`).click()
-    const drill = page.locator('[data-slot="card"]', { has: page.getByText(`我方前排 ${m} 的每一場`) })
-    await expect(drill.getByText(`共 ${v.n} 場`)).toBeVisible()
-  })
-
-  test("切換面向會清掉聚焦", async ({ page }) => {
-    await matrix(page).locator("tbody button").first().click()
-    await expect(crumbs(page)).toBeVisible()
     await facetRadio(page, "輸出組成").click()
     await expect(crumbs(page)).toHaveCount(0)
-  })
-
-  test("說明文字：整體勝率、前排的定義", async ({ page }) => {
-    await expect(page.getByText(/顏色和整體 \d+\.\d% 比/)).toBeVisible()
-    await expect(page.getByText(/前排＝出裝是坦克、AD 鬥士或 AP 鬥士的人/)).toBeVisible()
-  })
-})
-
-test.describe("陣容頁：陣容類型長條", () => {
-  test.beforeEach(async ({ page }) => {
-    await openPage(page, "lineups")
-    await expect(charts(page)).toHaveCount(2)
-  })
-
-  test("兩張長條圖：我方陣容類型、遇到的敵方陣容類型，長條 = 勝率，各圖場次加總 = 總場次", async ({ page }) => {
-    const total = lineupGames().length
-    for (const i of [0, 1]) {
-      const opt = await charts(page).nth(i).evaluate((el) => (el.parentElement as any).__chart.getOption())
-      const labels: string[] = opt.yAxis[0].data
-      expect(labels.length).toBeGreaterThan(2)
-      // 長條末端的場次寫在 label 或 data 上；用場次加總驗證：點進去的每一場數 = 這根長條的場次，這裡只確認有資料
-      expect(opt.series[0].data.length).toBe(labels.length)
-    }
-    void total
-  })
-
-  test("點「我方陣容類型」的一根長條 → 列出那種陣容的每一場，場次數和 SQL 一致", async ({ page }) => {
-    const chart = charts(page).first()
-    const bars = (await visibleBars(chart)).filter((b) => b.value > 8)
-    const pick = bars[0]
-    await clickBar(page, chart, pick.label)
-    const drill = page.locator('[data-slot="card"]', { has: page.getByText(`我方 ${pick.label} 的每一場`) })
-    await expect(drill).toBeVisible()
-    await expect(crumbs(page)).toContainText(pick.label)
-    // 標題的場次 = SQL：這個陣容類型 = 前排數 + 輸出組成
-    const [front, mix] = pick.label.split(" 前排・")
-    const n = lineupGames().filter((g) => (front === "3+" ? g.mf === "3 個以上" : g.mf === `${front} 個`) && g.mm === mix).length
-    await expect(drill.getByText(`共 ${n} 場`)).toBeVisible()
-  })
-
-  test("點「遇到的敵方陣容類型」的一根長條 → 標題是「敵方 …」", async ({ page }) => {
-    const chart = charts(page).nth(1)
-    const pick = (await visibleBars(chart)).filter((b) => b.value > 8)[0]
-    await clickBar(page, chart, pick.label)
-    await expect(page.locator('[data-slot="card"]', { has: page.getByText(`敵方 ${pick.label} 的每一場`) })).toBeVisible()
   })
 })
 
 test.describe("陣容頁：看誰的數據", () => {
   test.beforeEach(async ({ page }) => {
     await openPage(page, "lineups")
-    await expect(matrix(page)).toBeVisible()
   })
 
-  test("預設單位是「場」；換成「所有人」單位變「隊」，矩陣對稱（A 打 B + B 打 A = 100%）", async ({ page }) => {
-    await expect(matrix(page).locator("button").first()).toContainText("場")
+  test("所有人：只畫「一隊的陣容」一邊（敵方是鏡像），單位變「隊」；矩陣對稱", async ({ page }) => {
     await whoRadio(page, "所有人").click()
     await expect(crumbs(page)).toContainText("所有人")
     await ready(page)
+    await expect(sidePanel(page).getByText("一隊的陣容", { exact: true })).toBeVisible()
+    await expect(sidePanel(page).getByText("敵方", { exact: true })).toHaveCount(0)
+    await expect(page.getByText(/敵方就是我方的鏡像/)).toBeVisible()
+    await expandMatrix(page)
     await expect(matrix(page).locator("button").first()).toContainText("隊")
-    await expect(page.getByText(/矩陣對稱/)).toBeVisible()
-    // 對稱：取兩個非對角的格子，勝率加起來 100（四捨五入容許 1）
     const titles = await matrix(page).locator('tbody button[title*=" × 敵方 "]').evaluateAll((els) =>
       els.map((e) => ({ t: e.getAttribute("title")!, text: (e as HTMLElement).innerText })),
     )
@@ -218,14 +260,15 @@ test.describe("陣容頁：看誰的數據", () => {
     expect(checked).toBeGreaterThan(2)
   })
 
-  test("所有人模式下點一格：列出的場次數等於格子上的隊數", async ({ page }) => {
-    await whoRadio(page, "所有人").click()
+  test("追蹤對象：同一隊只算一次（前排數各組加總 = 有追蹤對象的不重複隊伍數）", async ({ page }) => {
+    await whoRadio(page, "追蹤對象").click()
     await ready(page)
-    const first = matrix(page).locator('tbody button[title*=" × 敵方 "]').first()
-    const title = (await first.getAttribute("title"))!
-    const n = Number(title.match(/：(\d+) 隊/)![1])
-    await first.click()
-    // 每隊挑一位代表，所以列數 = 隊數（不是十個人都列）
-    await expect(page.getByText(new RegExp(`共 ${n} 場`))).toBeVisible()
+    const teams = sql(
+      `SELECT COUNT(*) n FROM (SELECT DISTINCT p.platform_id, p.game_id, p.team_id FROM match_participants p JOIN matches m USING (platform_id, game_id)
+        WHERE m.queue_id = 2400 AND p.puuid IN (SELECT puuid FROM accounts WHERE is_me = 1 OR tracked = 1))`,
+    )[0].n
+    const mine = sideColumn(page, /^我方（含那位玩家自己）$/)
+    const sum = await mine.getByTestId("gap-row").evaluateAll((els) => els.slice(0, 4).reduce((a, e) => a + Number(e.getAttribute("data-games")), 0))
+    expect(sum).toBe(Number(teams))
   })
 })

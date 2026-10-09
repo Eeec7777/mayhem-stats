@@ -217,89 +217,10 @@ test.describe("好友比較頁：全員一覽", () => {
   })
 })
 
-test.describe("好友比較頁：陣容情境", () => {
-  test.beforeEach(async ({ page }) => {
-    await openPage(page, "crew")
-    await expect(panel(page, "陣容情境").locator("table")).toBeVisible()
-  })
-
-  const ctx = (page: Page) => panel(page, "陣容情境")
-  const bucket = (n: number, cap: number) => (n >= cap ? (cap === 2 ? "2 個以上" : `${cap} 個以上`) : `${n} 個`)
-  const front = "(b.build_role = '坦克' OR b.build_role LIKE '%鬥士')"
-
-  test("預設看自己、「隊友前排數」；基準文字是他自己的整體勝率", async ({ page }) => {
-    const me = crewMembers().find((m) => m.is_me)!
-    const r = record(me.puuid)
-    await expect(ctx(page).getByRole("combobox", { name: "要看的玩家" })).toHaveValue(me.puuid)
-    await expect(ctx(page).getByRole("radio", { name: "隊友前排數" })).toHaveAttribute("aria-checked", "true")
-    await expect(ctx(page).getByText(`基準：他自己的整體勝率 ${((Number(r.wins) / Number(r.games)) * 100).toFixed(1)}%`)).toBeVisible()
-  })
-
-  test("四種分組可選：隊友前排數、敵方前排數、敵方傷害類型、隊友傷害類型", async ({ page }) => {
-    await expect(ctx(page).getByRole("radio")).toHaveText(["隊友前排數", "敵方前排數", "敵方傷害類型", "隊友傷害類型"])
-  })
-
-  test("隊友前排數矩陣：每個「出裝 × 前排數」格子的場次與勝敗和 SQL 一致", async ({ page }) => {
-    const me = crewMembers().find((m) => m.is_me)!
-    const rows = sql(
-      `WITH g AS (
-         SELECT p.platform_id, p.game_id, p.team_id, p.participant_id, p.win, b.build_role AS role
-           FROM match_participants p JOIN matches m USING (platform_id, game_id) JOIN mat_builds b ON b.participant_rowid = p.rowid
-          WHERE p.puuid = ? AND m.queue_id = 2400)
-       SELECT g.role, g.win,
-              (SELECT COUNT(*) FROM match_participants q JOIN mat_builds b ON b.participant_rowid = q.rowid
-                WHERE q.platform_id = g.platform_id AND q.game_id = g.game_id AND q.team_id = g.team_id AND q.participant_id <> g.participant_id AND ${front}) AS ally_front
-         FROM g`,
-      [me.puuid],
-    )
-    const cells = new Map<string, { n: number; w: number }>()
-    for (const r of rows) {
-      // 「未成形」（裝備太少判不出定位）不是矩陣的一列，只算在「所有出裝」裡
-      if (r.role === "未成形") continue
-      const k = `${r.role}|${bucket(Number(r.ally_front), 2)}`
-      const c = cells.get(k) ?? { n: 0, w: 0 }
-      cells.set(k, { n: c.n + 1, w: c.w + Number(r.win) })
-    }
-    expect(cells.size).toBeGreaterThan(4)
-    for (const [k, v] of cells) {
-      const [role, b] = k.split("|")
-      const cell = ctx(page).locator(`div[title^="${role}・隊友前排數 ${b}"]`)
-      await expect(cell, k).toContainText(`${v.w}-${v.n - v.w}`)
-      await expect(cell).toHaveAttribute("title", new RegExp(`${v.n} 場・${v.w} 勝 ${v.n - v.w} 敗`))
-    }
-  })
-
-  test("「所有出裝」×「所有陣容」格 = 這個人的總場次與勝率", async ({ page }) => {
-    const me = crewMembers().find((m) => m.is_me)!
-    const r = record(me.puuid)
-    const all = ctx(page).locator('div[title^="所有出裝・所有陣容"]')
-    await expect(all).toHaveAttribute("title", new RegExp(`${r.games} 場・${r.wins} 勝 ${Number(r.games) - Number(r.wins)} 敗・勝率 ${((Number(r.wins) / Number(r.games)) * 100).toFixed(1)}%`))
-  })
-
-  test("敵方前排數：格子加總 = 總場次", async ({ page }) => {
-    await ctx(page).getByRole("radio", { name: "敵方前排數" }).click()
-    await expect(ctx(page).locator("thead")).toContainText("敵方有幾個前排")
-    const me = crewMembers().find((m) => m.is_me)!
-    const total = Number(record(me.puuid).games)
-    // 最下面的「所有出裝」列：各陣容桶加總 = 總場次
-    const titles = await ctx(page).locator('div[title^="所有出裝・敵方前排數 "]').evaluateAll((els) => els.map((e) => e.getAttribute("title")!))
-    const sum = titles.reduce((a, t) => a + Number(t.match(/(\d+) 場/)?.[1] ?? 0), 0)
-    expect(sum).toBe(total)
-  })
-
-  test("每種陣容下有「適合／避開」建議卡", async ({ page }) => {
-    await expect(ctx(page).getByText(/^隊友前排數：(0 個|1 個|2 個以上)$/)).toHaveCount(3)
-    await ctx(page).getByRole("radio", { name: "敵方傷害類型" }).click()
-    await expect(ctx(page).getByText(/^敵方傷害類型：/)).toHaveCount(3)
-  })
-
-  test("換成別的好友：基準勝率與總格跟著變成那個人的", async ({ page }) => {
-    const other = crewMembers().find((m) => !m.is_me)!
-    await ctx(page).getByRole("combobox", { name: "要看的玩家" }).selectOption(other.puuid)
-    const r = record(other.puuid)
-    await expect(ctx(page).getByText(`基準：他自己的整體勝率 ${((Number(r.wins) / Number(r.games)) * 100).toFixed(1)}%`)).toBeVisible()
-    await expect(ctx(page).locator('div[title^="所有出裝・所有陣容"]')).toHaveAttribute("title", new RegExp(`${r.games} 場・${r.wins} 勝`))
-  })
+test("好友比較頁不再有「陣容情境」：陣容分析集中在陣容頁", async ({ page }) => {
+  await openPage(page, "crew")
+  await expect(panel(page, "全員一覽").locator("button.slide-in").first()).toBeVisible()
+  await expect(page.getByText("陣容情境", { exact: true })).toHaveCount(0)
 })
 
 test.describe("好友比較頁：查英雄／查增幅裝置", () => {

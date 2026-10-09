@@ -25,7 +25,7 @@ npm run typecheck:e2e                    # 測試本身的型別檢查（Playwri
 ## 怎麼驗證數字
 
 照 `verify-change` skill 的規則：Cube 算出來的東西不能只看它自己。`e2e/oracle.py` 以**唯讀**方式直接讀 `mayhem.db`，
-測試用 `db.ts` 的 `sql()` 自己寫 SQL 算同一件事再比（陣容矩陣、好友比較的陣容情境、節奏頁的「一輪」等
+測試用 `db.ts` 的 `sql()` 自己寫 SQL 算同一件事再比（陣容矩陣、陣容頁的出裝建議、節奏頁的「一輪」等
 有視窗函數或分類規則的指標，是在測試裡用 TypeScript 獨立重寫一遍規則來比）。
 
 圖表是 canvas，DOM 裡看不到資料。`ResponsiveChart` 把 ECharts 實例掛在外層 div 的 `__chart`，
@@ -48,7 +48,7 @@ npm run typecheck:e2e                    # 測試本身的型別檢查（Playwri
 |---|---|
 | `explore.spec.ts` 自訂篩選：玩家對局數 大於 10 | 指標當條件時 Cube 產生 `HAVING COUNT(...) > ?`，值以字串 `'10'` 綁定，SQLite 裡整數 > 文字恆為假，`gt` 一律 0 列（`lt` 一律全中） |
 | `api.spec.ts` favicon.svg 載得到 | `app.py` 只把 `web/dist/assets` 掛在 `/assets`，`dist` 根目錄的 `favicon.svg`、`icons.svg` 回 404 |
-| `smoke.spec.ts` 768px 寬：對局紀錄、陣容、好友比較 | 頁面橫向溢出 50～256px |
+| `smoke.spec.ts` 768px 寬：對局紀錄、好友比較 | 頁面橫向溢出 50～256px（陣容頁 2026-10 改版後已修好） |
 
 ## 檔案
 

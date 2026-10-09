@@ -5,7 +5,8 @@ import { PAGE_LABEL, charts, openPage, sweepHover, type PageId } from "./helpers
 // （zrender 解析 oklch 失敗就是這樣，見 ui-conventions）或「窄螢幕橫向溢出」這類跨頁面的退化。
 
 const PAGES = Object.keys(PAGE_LABEL) as PageId[]
-const CHART_PAGES: PageId[] = ["dashboard", "champions", "augments", "lineups", "players", "time", "tilt", "losses"]
+// 陣容頁改成 HTML 的勝率差森林圖（2026-10），不再有 ECharts
+const CHART_PAGES: PageId[] = ["dashboard", "champions", "augments", "players", "time", "tilt", "losses"]
 const THEMES = [
   ["neon", "霓虹"], ["matrix", "終端"], ["lava", "熔岩"], ["violet", "紫電"],
   ["daylight", "晨光"], ["mint", "薄荷"], ["sakura", "櫻花"], ["sand", "沙丘"],
@@ -28,10 +29,10 @@ test.describe("每個主題 × 有圖表的頁面", () => {
   }
 })
 
-// 平板寬度（768px）下這三頁目前會橫向溢出 50～256px（2026-10 實測：對局紀錄的卡片列固定寬度合計超過內容區、
-// 陣容矩陣與好友比較的表格沒有放進自己的捲動容器）。列為已知問題：修好之後該頁的測試會「意外通過」而失敗，
-// 屆時把頁名從這個集合拿掉即可。
-const KNOWN_OVERFLOW: Record<number, Set<PageId>> = { 390: new Set(), 768: new Set<PageId>(["matches", "lineups", "crew"]) }
+// 已知會橫向溢出的頁。列進來的頁用 test.fail：修好之後該頁的測試會「意外通過」而失敗，屆時把頁名拿掉。
+// 768px：對局紀錄的卡片列固定寬度合計超過內容區（溢出約 50px），好友比較的全員一覽表格沒有放進自己的捲動容器（約 256px）。
+// 陣容頁原本也在名單上，2026-10 改版成森林圖、矩陣收進自己的捲動容器之後不再溢出。
+const KNOWN_OVERFLOW: Record<number, Set<PageId>> = { 390: new Set(), 768: new Set<PageId>(["matches", "crew"]) }
 
 test.describe("窄螢幕：頁面本身不橫向溢出（表格與矩陣要在自己的容器裡捲動）", () => {
   for (const width of [390, 768]) {
@@ -68,6 +69,8 @@ test.describe("無障礙基本功", () => {
   })
 
   test("頁首有且只有一個 h1，標題和側邊欄選中的頁一致", async ({ page }) => {
+    // 一次走完 13 頁，每頁都要等資料畫完，預設的時限不夠
+    test.setTimeout(180_000)
     for (const p of PAGES) {
       await openPage(page, p)
       await expect(page.locator("h1")).toHaveCount(1)
