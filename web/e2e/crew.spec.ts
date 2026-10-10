@@ -1,6 +1,6 @@
 import type { Locator, Page } from "@playwright/test"
 import { test, expect } from "./fixtures"
-import { charts, header, openPage, radarPoint, ready } from "./helpers"
+import { charts, header, openPage, ready } from "./helpers"
 import { sql } from "./db"
 
 const crumbs = (page: Page) => page.locator('nav[aria-label="目前位置"]')
@@ -276,7 +276,9 @@ test.describe("好友比較頁：抽屜（兩個分頁）", () => {
     await expect(drawer.getByText("看得出的強項")).toBeVisible()
     await expect(drawer.getByText("看得出的弱項")).toBeVisible()
     await ready(page)
-    await expect(charts(drawer)).toHaveCount(2)
+    // 出裝雷達是 SVG（和一覽表同一套判定），ECharts 只剩貢獻分解那一張
+    await expect(charts(drawer)).toHaveCount(1)
+    await expect(drawer.getByTestId("role-hex")).toBeVisible()
   })
 
   test("出裝與英雄分頁：八種出裝一列一個，判定和一覽表同一列的標籤一致", async ({ page }) => {
@@ -331,19 +333,31 @@ test.describe("好友比較頁：抽屜（兩個分頁）", () => {
     await expect(drawer.getByTestId("strip-weak").getByTestId("crew-champ")).toHaveCount(st.filter((x) => x === "不強勢" || x === "偏弱").length)
   })
 
-  test("總覽的雷達點一個出裝定位 → 切到「出裝與英雄」分頁、只剩那種出裝", async ({ page }) => {
-    await nameButton(matrixRows(page).first()).click()
+  test("總覽的雷達點一個出裝定位 → 切到「出裝與英雄」分頁、只剩那種出裝；雷達的判定和一覽表同一列一致", async ({ page }) => {
+    const row = matrixRows(page).first()
+    const chips = new Map<string, string>()
+    for (const c of await row.getByTestId("crew-role-chip").all()) chips.set((await c.getAttribute("data-label"))!, (await c.getAttribute("data-strength"))!)
+    await row.click()
     const drawer = page.getByRole("dialog")
-    await ready(page)
-    const radar = charts(drawer).first()
-    const opt = await radar.evaluate((el) => (el.parentElement as any).__chart.getOption())
-    const values: number[] = opt.series[0].data[0].value
-    const idx = values.indexOf(Math.max(...values))
-    const role: string = opt.radar[0].indicator[idx].name
-    const p = await radarPoint(radar, idx)
-    await page.mouse.click(p.x, p.y)
+    const hex = drawer.getByTestId("role-hex")
+    for (const g of await hex.locator("g[data-label]").all()) {
+      const label = (await g.getAttribute("data-label"))!
+      if (chips.has(label)) expect(await g.getAttribute("data-strength"), label).toBe(chips.get(label))
+    }
+    const role = (await hex.locator("g[data-label][tabindex='0']").first().getAttribute("data-label"))!
+    await hex.locator(`g[data-label="${role}"]`).click()
     await expect(drawer.getByRole("tab", { name: "出裝與英雄" })).toHaveAttribute("data-state", "active")
     await expect(crumbs(page)).toContainText(role)
+  })
+
+  test("一覽表裡的英雄頭像可以點：打開抽屜的「出裝與英雄」並展開那隻英雄的每一場", async ({ page }) => {
+    const champ = matrixRows(page).first().locator("[role=button][data-testid=crew-champ]").first()
+    const label = (await champ.getAttribute("aria-label"))!.replace(/^看|的每一場$/g, "")
+    await expect(champ).toHaveCSS("cursor", "pointer")
+    await champ.click()
+    const drawer = page.getByRole("dialog")
+    await expect(drawer.getByRole("tab", { name: "出裝與英雄" })).toHaveAttribute("data-state", "active")
+    await expect(drawer.locator(`button[aria-expanded="true"][data-row-key="${label}"]`)).toBeVisible()
   })
 
   test("總覽最下面是貢獻分解：雷達 + 六項橫條", async ({ page }) => {

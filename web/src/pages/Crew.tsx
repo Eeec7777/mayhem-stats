@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react"
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react"
 import { ArrowRight, Check, ChevronDown, ChevronsUpDown, Search } from "lucide-react"
 import { RecordCell } from "@/components/cells"
 import { ContribBars, ContribScore } from "@/components/Contribution"
@@ -11,7 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { EmptyState, Panel, QueryError } from "@/components/primitives"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { ContribRadarChart, RadarChart, SHRINK_K, shrunk } from "@/components/charts"
+import { ContribRadarChart, SHRINK_K, shrunk } from "@/components/charts"
 import { DetailDrawer, useDrawerSettled } from "@/components/DetailDrawer"
 import { ForestAxis, ForestTrack } from "@/components/GapForest"
 import { useCube } from "@/hooks/useCube"
@@ -279,6 +279,74 @@ function MiniHex({ data, total, size = 96 }: { data: HexDatum[]; total: number; 
   )
 }
 
+/** 抽屜總覽的雷達：和一覽表的迷你雷達同一套——形狀是各出裝佔他場次的比例、顏色是隊內貢獻的判定。
+ *  原本用共用的 RadarChart，它的標籤顏色是「勝率和他自己的平均比」，和一覽表的判定（隊內貢獻）不是同一件事，
+ *  同一個坦克一邊寫偏強、一邊是紅字，看起來像數字對不上。 */
+function RoleHex({ roles, total, selected, onPick }: { roles: Judged[]; total: number; selected: string | null; onPick: (label: string) => void }) {
+  const W = 420
+  const H = 300
+  const cx = W / 2
+  const cy = H / 2 + 4
+  const r = 92
+  const n = roles.length
+  const at = (i: number, frac: number) => {
+    const a = ((90 + (i * 360) / n) * Math.PI) / 180 // 和一覽表同方向：正上方開始、逆時針
+    return [cx + Math.cos(a) * r * frac, cy - Math.sin(a) * r * frac] as const
+  }
+  const ring = (frac: number) => roles.map((_, i) => at(i, frac).join(",")).join(" ")
+  const share = roles.map((j) => (total ? j.games / total : 0))
+  const scaleMax = Math.max(0.01, ...share)
+  const tone = (j: Judged) => (j.g?.interval ? DOT_CLASS[j.strength] : "fill-muted-foreground")
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full max-w-[420px] overflow-visible" data-testid="role-hex">
+      <polygon points={ring(1)} className="fill-muted/30 stroke-muted-foreground/40" strokeWidth={1} />
+      <polygon points={ring(0.5)} className="fill-none stroke-muted-foreground/25" strokeWidth={0.75} />
+      {roles.map((_, i) => {
+        const [x, y] = at(i, 1)
+        return <line key={i} x1={cx} y1={cy} x2={x} y2={y} className="stroke-muted-foreground/25" strokeWidth={0.75} />
+      })}
+      <polygon
+        points={share.map((v, i) => at(i, Math.min(1, v / scaleMax)).join(",")).join(" ")}
+        className="fill-data/30 stroke-data"
+        strokeWidth={2}
+        strokeLinejoin="round"
+      />
+      {roles.map((j, i) => {
+        const [x, y] = at(i, Math.min(1, share[i] / scaleMax))
+        const [lx, ly] = at(i, 1.42)
+        const on = selected === j.label
+        return (
+          <g
+            key={j.key}
+            role="button"
+            tabIndex={j.games ? 0 : -1}
+            aria-label={`看他用${j.label}玩過的英雄`}
+            data-label={j.label}
+            data-strength={j.strength}
+            className={cn("outline-none", j.games ? "cursor-pointer" : "cursor-default opacity-60", "[&:hover_text]:underline")}
+            onClick={() => j.games && onPick(j.label)}
+            onKeyDown={(e) => {
+              if (j.games && (e.key === "Enter" || e.key === " ")) {
+                e.preventDefault()
+                onPick(j.label)
+              }
+            }}
+          >
+            <title>{j.games ? tipOf(j, null) : `${j.label}：沒有對局`}</title>
+            <circle cx={x} cy={y} r={isClear(j.strength) ? 5 : j.g?.interval && j.strength !== "看不出" ? 4 : 3} className={tone(j)} />
+            <text x={lx} y={ly - 7} textAnchor="middle" dominantBaseline="central" className={cn("text-[13px] font-semibold", tone(j), on && "underline")}>
+              {j.label}
+            </text>
+            <text x={lx} y={ly + 9} textAnchor="middle" dominantBaseline="central" className="fill-muted-foreground font-mono text-[11px]">
+              {j.games ? `${j.score === null ? "—" : Math.round(j.score)}・${j.games} 場` : "沒打過"}
+            </text>
+          </g>
+        )
+      })}
+    </svg>
+  )
+}
+
 /** 出裝定位的判定標籤：「1 強勢 AD 輸出」，實心是看得出的、虛線框是還在誤差內 */
 function RoleChips({ items, ownWr }: { items: Judged[]; ownWr: number | null }) {
   if (!items.length) return <span className="text-[11px] text-muted-foreground">—</span>
@@ -336,11 +404,13 @@ function HowWeJudge({ children }: { children: ReactNode }) {
 
 // ── 全員一覽：英雄 ──────────────────────────────────────────────────────────
 
-function ChampBadge({ j, rank, ownWr }: { j: Judged; rank: number; ownWr: number | null }) {
+/** 英雄頭像：名次、判定外框、隊內貢獻。給 onClick 時整顆可以點（在整列按鈕裡面也可以，點擊不會傳到外層）；
+ *  放在別的按鈕裡時，外層按鈕加上 group，滑過一樣會有上浮與變亮 */
+function ChampBadge({ j, rank, ownWr, onClick }: { j: Judged; rank: number; ownWr: number | null; onClick?: () => void }) {
   const p = isPos(j.strength)
   const clear = isClear(j.strength)
-  return (
-    <span title={`第 ${rank} 名・${tipOf(j, ownWr)}`} className="relative shrink-0" data-testid="crew-champ" data-strength={j.strength}>
+  const body = (
+    <span className="relative block transition duration-150 group-hover:-translate-y-0.5 group-hover:brightness-125">
       <span
         className={cn(
           "absolute -left-1 -top-1 z-10 flex size-4 items-center justify-center rounded-full font-mono text-[9px] font-bold text-background ring-1 ring-background",
@@ -353,7 +423,7 @@ function ChampBadge({ j, rank, ownWr }: { j: Judged; rank: number; ownWr: number
         src={iconUrl(j.icon)}
         alt={j.label}
         className={cn(
-          "size-8 rounded-md bg-icon-tile",
+          "size-8 rounded-md bg-icon-tile transition-shadow duration-150 group-hover:shadow-md group-hover:shadow-primary/40",
           clear && p && "ring-2 ring-win/80",
           clear && !p && "ring-2 ring-loss/80",
           !clear && p && "outline-1 outline-offset-1 outline-dashed outline-win/60",
@@ -368,6 +438,38 @@ function ChampBadge({ j, rank, ownWr }: { j: Judged; rank: number; ownWr: number
       >
         {Math.round(j.score ?? 50)}
       </span>
+    </span>
+  )
+  const tip = `第 ${rank} 名・${tipOf(j, ownWr)}${onClick ? "\n點一下看他玩這隻的每一場" : ""}`
+  if (!onClick) {
+    return (
+      <span title={tip} className="relative shrink-0" data-testid="crew-champ" data-strength={j.strength}>
+        {body}
+      </span>
+    )
+  }
+  return (
+    // 在一覽表的整列按鈕裡面，不能再放 <button>，所以用 role="button"；點擊與鍵盤都不往外傳
+    <span
+      role="button"
+      tabIndex={0}
+      title={tip}
+      aria-label={`看${j.label}的每一場`}
+      data-testid="crew-champ"
+      data-strength={j.strength}
+      onClick={(e) => {
+        e.stopPropagation()
+        onClick()
+      }}
+      onKeyDown={(e) => {
+        if (e.key !== "Enter" && e.key !== " ") return
+        e.preventDefault()
+        e.stopPropagation()
+        onClick()
+      }}
+      className="group relative shrink-0 cursor-pointer rounded-md outline-none focus-visible:ring-2 focus-visible:ring-primary"
+    >
+      {body}
     </span>
   )
 }
@@ -387,13 +489,23 @@ function sideOf(champs: Judged[], side: "pos" | "neg") {
     )
 }
 
-function ChampSide({ items, ownWr, onMore }: { items: Judged[]; ownWr: number | null; onMore?: () => void }) {
+function ChampSide({
+  items,
+  ownWr,
+  onMore,
+  onPick,
+}: {
+  items: Judged[]
+  ownWr: number | null
+  onMore?: () => void
+  onPick?: (label: string) => void
+}) {
   if (!items.length) return <span className="text-[11px] text-muted-foreground">—</span>
   const rest = items.length - CHAMPS_SHOWN
   return (
     <span className="flex flex-wrap items-center gap-1.5 gap-y-3">
       {items.slice(0, CHAMPS_SHOWN).map((j, i) => (
-        <ChampBadge key={j.key} j={j} rank={i + 1} ownWr={ownWr} />
+        <ChampBadge key={j.key} j={j} rank={i + 1} ownWr={ownWr} onClick={onPick ? () => onPick(j.label) : undefined} />
       ))}
       {rest > 0 &&
         (onMore ? (
@@ -441,10 +553,10 @@ function ChampStrip({
               type="button"
               onClick={() => onPick(j.label)}
               aria-label={`看${j.label}的每一場`}
-              className="flex shrink-0 flex-col items-center gap-1.5 rounded-md px-0.5 transition hover:bg-accent/60"
+              className="group flex shrink-0 cursor-pointer flex-col items-center gap-1.5 rounded-md px-0.5 transition hover:bg-accent/60"
             >
               <ChampBadge j={j} rank={i + 1} ownWr={ownWr} />
-              <span className="mt-1 max-w-[3.5rem] truncate text-[10px] text-muted-foreground">{j.label}</span>
+              <span className="mt-1 max-w-[3.5rem] truncate text-[10px] text-muted-foreground group-hover:text-foreground">{j.label}</span>
             </button>
           ))}
         </div>
@@ -546,7 +658,17 @@ function readingOf(p: Profile) {
 }
 
 /** 總覽分頁的「看得出的強項／弱項」：只列區間整段在一邊的，其餘只講有幾項 */
-function Highlights({ profile, onRole, onChamps }: { profile: Profile; onRole: (r: string) => void; onChamps: () => void }) {
+function Highlights({
+  profile,
+  onRole,
+  onChamps,
+  onChamp,
+}: {
+  profile: Profile
+  onRole: (r: string) => void
+  onChamps: () => void
+  onChamp: (label: string) => void
+}) {
   const ownWr = profile.overall.winrate
   const block = (title: string, s: Strength, tone: string) => {
     const roles = profile.roles.filter((j) => j.strength === s)
@@ -570,7 +692,7 @@ function Highlights({ profile, onRole, onChamps }: { profile: Profile; onRole: (
               </button>
             ))}
             {champs.slice(0, 8).map((j, i) => (
-              <ChampBadge key={j.key} j={j} rank={i + 1} ownWr={ownWr} />
+              <ChampBadge key={j.key} j={j} rank={i + 1} ownWr={ownWr} onClick={() => onChamp(j.label)} />
             ))}
             {champs.length > 8 && (
               <button type="button" onClick={onChamps} className="text-[11px] text-muted-foreground hover:text-foreground hover:underline">
@@ -671,6 +793,7 @@ function PlayerDrawerBody({
   tab,
   onTab,
   crewFilter,
+  jumpChamp,
 }: {
   player: Player
   profile: Profile
@@ -679,11 +802,12 @@ function PlayerDrawerBody({
   tab: DrawerTab
   onTab: (tab: DrawerTab) => void
   crewFilter: (puuids: string[]) => CubeFilter
+  /** 從一覽表點英雄頭像打開時：直接展開那隻英雄的每一場 */
+  jumpChamp?: string
 }) {
   const { apply, setAccount } = useFilters()
   const go = useNavigate()
   const settled = useDrawerSettled()
-  const [radarMode, setRadarMode] = useState<"games" | "winrate">("games")
   const [sortBy, setSortBy] = useState<"score" | "games">("score")
   const [onlyClear, setOnlyClear] = useState(false)
   // 進場的滑入動畫只在第一次列出時播：切換排序或篩選時列會重新排列，React 搬動 DOM 節點會讓 CSS 動畫重播，
@@ -732,21 +856,26 @@ function PlayerDrawerBody({
   }, [champJudged, sortBy, onlyClear])
 
   // 橫向長條點一隻英雄：清單裡展開那一列（被「只看看得出的」藏起來就先放回全部），再捲過去
-  const jumpToChamp = (label: string) => {
+  const jumpToChamp = (label: string, delay = 60) => {
+    onTab("picks")
     setOnlyClear(false)
     setListMinH(undefined)
     setOpenChamp(label)
     setTimeout(() => {
       document.querySelector(`[data-row-key="${CSS.escape(label)}"]`)?.scrollIntoView({ block: "start", behavior: "smooth" })
-    }, 60)
+    }, delay)
   }
+  // 抽屜剛打開時要等它滑進來（約 300ms）、清單畫出來，再捲過去
+  useEffect(() => {
+    if (jumpChamp) jumpToChamp(jumpChamp, 450)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jumpChamp])
   const pickRole = (r: string | null) => {
     onRole(r)
     onTab("picks")
   }
   const ov = profile.overall
   const wrAll = profile.overallWr
-  const radar = profile.roles.map(({ label, games, wins, winrate }) => ({ label, games, wins, winrate }))
   const champCols = "grid-cols-[1.5rem_minmax(8rem,1fr)_3rem_minmax(8rem,11rem)_minmax(7rem,10rem)_2.25rem_6.5rem]"
   // 英雄清單裡的貢獻區間共用一把尺：取所有區間最遠的一端，進位到 10，介於 20～50
   const champReach = Math.min(
@@ -808,20 +937,14 @@ function PlayerDrawerBody({
         <div className="grid gap-4 rounded-lg border p-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
           <div>
             <div className="flex items-center justify-between gap-2">
-              <div className="text-sm font-semibold">各出裝的場次</div>
-              <ToggleGroup type="single" size="sm" variant="outline" value={radarMode} onValueChange={(v) => v && setRadarMode(v as "games" | "winrate")}>
-                <ToggleGroupItem value="games" className="h-7 px-2 text-xs">形狀：場次</ToggleGroupItem>
-                <ToggleGroupItem value="winrate" className="h-7 px-2 text-xs">形狀：勝率</ToggleGroupItem>
-              </ToggleGroup>
+              <div className="text-sm font-semibold">各出裝</div>
             </div>
-            <div className="text-[11px] text-muted-foreground">點某一類的方向，看他用那種出裝玩過的英雄</div>
-            {settled ? (
-              <RadarChart data={radar} mode={radarMode} baseline={ownWr} total={ov.games} height={260} selected={role} onPick={(r) => pickRole(r)} />
-            ) : (
-              <div className="h-[260px]" />
-            )}
+            <div className="text-[11px] text-muted-foreground">
+              形狀是各出裝佔他場次的比例；顏色和一覽表一樣是隊內貢獻的判定，標籤下是隊內貢獻・場次。點一種出裝看他用它玩過的英雄
+            </div>
+            <RoleHex roles={profile.roles} total={ov.games} selected={role} onPick={(r) => pickRole(r)} />
           </div>
-          <Highlights profile={profile} onRole={(r) => pickRole(r)} onChamps={() => onTab("picks")} />
+          <Highlights profile={profile} onRole={(r) => pickRole(r)} onChamps={() => onTab("picks")} onChamp={(label) => jumpToChamp(label, 150)} />
         </div>
         {/* 貢獻分解：六項各自和同類型比（選了出裝就只看那種出裝） */}
       <div className="rounded-lg border p-3">
@@ -1225,7 +1348,7 @@ export function Crew() {
   const [excluded, setExcluded] = useState<Set<string>>(new Set())
   const chosen = crew.filter((p) => !excluded.has(p.puuid))
   const puuids = chosen.map((p) => p.puuid)
-  const [focus, setFocus] = useState<{ puuid: string; role: string | null; tab: DrawerTab } | null>(null)
+  const [focus, setFocus] = useState<{ puuid: string; role: string | null; tab: DrawerTab; champ?: string } | null>(null)
 
   const byId = useMemo(() => new Map(crew.map((p) => [p.puuid, p])), [crew])
   const focusPlayer = focus ? byId.get(focus.puuid) : undefined
@@ -1313,7 +1436,7 @@ export function Crew() {
     )
   }
 
-  const open = (puuid: string, role: string | null, tab: DrawerTab) => setFocus({ puuid, role, tab })
+  const open = (puuid: string, role: string | null, tab: DrawerTab, champ?: string) => setFocus({ puuid, role, tab, champ })
 
   return (
     <div className="space-y-4">
@@ -1445,8 +1568,8 @@ export function Crew() {
                         <RoleChips items={sideOf(prof.roles, "neg")} ownWr={ownWr} />
                       </span>
                       <span className="grid grid-cols-2 items-center gap-3">
-                        <ChampSide items={sideOf(prof.champs, "pos")} ownWr={ownWr} />
-                        <ChampSide items={sideOf(prof.champs, "neg")} ownWr={ownWr} />
+                        <ChampSide items={sideOf(prof.champs, "pos")} ownWr={ownWr} onPick={(label) => open(p.puuid, null, "picks", label)} />
+                        <ChampSide items={sideOf(prof.champs, "neg")} ownWr={ownWr} onPick={(label) => open(p.puuid, null, "picks", label)} />
                       </span>
                     </button>
                   )
@@ -1502,6 +1625,7 @@ export function Crew() {
             onRole={(role) => setFocus((f) => (f ? { ...f, role } : f))}
             tab={focus.tab}
             onTab={(tab) => setFocus((f) => (f ? { ...f, tab } : f))}
+            jumpChamp={focus.champ}
             crewFilter={crewFilter}
           />
         )}
