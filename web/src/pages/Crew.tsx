@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState, type CSSProperties, type ReactNode } from "react"
+import { Fragment, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react"
 import { ArrowRight, Check, ChevronDown, ChevronsUpDown, Search } from "lucide-react"
 import { RecordCell } from "@/components/cells"
 import { ContribBars, ContribScore } from "@/components/Contribution"
@@ -652,6 +652,12 @@ function PlayerDrawerBody({
   const [radarMode, setRadarMode] = useState<"games" | "winrate">("games")
   const [sortBy, setSortBy] = useState<"score" | "games">("score")
   const [onlyClear, setOnlyClear] = useState(false)
+  // 進場的滑入動畫只在第一次列出時播：切換排序或篩選時列會重新排列，React 搬動 DOM 節點會讓 CSS 動畫重播，
+  // 整張清單看起來在跳來跳去
+  const [reordered, setReordered] = useState(false)
+  // 切到「只看看得出的」時清單一下變短，捲動位置會被擠回頂端；那時先把清單區撐在原本的高度
+  const listRef = useRef<HTMLDivElement>(null)
+  const [listMinH, setListMinH] = useState<number | undefined>(undefined)
   // 點英雄列展開那隻英雄的每一場（同時只開一隻，免得被好幾份列表撐得很長）
   const [openChamp, setOpenChamp] = useState<string | null>(null)
   useCrumb(20, openChamp ? `${openChamp}的每一場` : null, () => setOpenChamp(null))
@@ -828,16 +834,26 @@ function PlayerDrawerBody({
             判定的區間依同時比了 {champJudged.k} 隻（{MIN_N} 場以上）放寬，所以單隻英雄很難看得出差別
           </div>
           <div className="flex items-center gap-2">
-            <ToggleGroup type="single" size="sm" variant="outline" value={sortBy} onValueChange={(v) => v && setSortBy(v as "score" | "games")}>
+            <ToggleGroup type="single" size="sm" variant="outline" value={sortBy} onValueChange={(v) => {
+                if (!v) return
+                setReordered(true)
+                setSortBy(v as "score" | "games")
+              }}>
               <ToggleGroupItem value="score" className="h-7 px-2 text-xs">依貢獻</ToggleGroupItem>
               <ToggleGroupItem value="games" className="h-7 px-2 text-xs">依場次</ToggleGroupItem>
             </ToggleGroup>
-            <ToggleGroup type="single" size="sm" variant="outline" value={onlyClear ? "clear" : "all"} onValueChange={(v) => v && setOnlyClear(v === "clear")}>
+            <ToggleGroup type="single" size="sm" variant="outline" value={onlyClear ? "clear" : "all"} onValueChange={(v) => {
+                if (!v) return
+                setReordered(true)
+                setListMinH(v === "clear" ? listRef.current?.offsetHeight : undefined)
+                setOnlyClear(v === "clear")
+              }}>
               <ToggleGroupItem value="all" className="h-7 px-2 text-xs">全部</ToggleGroupItem>
               <ToggleGroupItem value="clear" className="h-7 px-2 text-xs">只看看得出的</ToggleGroupItem>
             </ToggleGroup>
           </div>
         </div>
+        <div ref={listRef} style={{ minHeight: onlyClear ? listMinH : undefined }}>
         {role && (!settled || champs.loading) ? (
           <Skeleton className="h-[320px] w-full" />
         ) : role && champs.error ? (
@@ -864,7 +880,7 @@ function PlayerDrawerBody({
                     onToggle={() => setOpenChamp(open ? null : j.label)}
                     label={j.label}
                     style={{ "--stagger": `${Math.min(i * 30, 400)}ms` } as CSSProperties}
-                    className={cn("slide-in grid items-center gap-3 rounded-md px-2 py-1.5", champCols)}
+                    className={cn(!reordered && "slide-in", "grid items-center gap-3 rounded-md px-2 py-1.5", champCols)}
                   >
                     <span className="text-right font-mono text-[11px] font-bold tabular-nums text-muted-foreground" data-testid="pick-rank">
                       {i + 1}
@@ -901,6 +917,7 @@ function PlayerDrawerBody({
             })}
           </div>
         )}
+        </div>
         </div>
       </TabsContent>
 
