@@ -133,7 +133,7 @@ cubes:
 
       - name: played_at
         title: 對局時間
-        sql: "datetime({CUBE}.game_creation / 1000, 'unixepoch')"
+        sql: "strftime('%Y-%m-%dT%H:%M:%f', {CUBE}.game_creation / 1000.0, 'unixepoch')"
         type: time
         public: false
 

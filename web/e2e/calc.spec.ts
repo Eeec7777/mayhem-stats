@@ -36,7 +36,7 @@ test.describe("出裝計算機", () => {
   })
 
   test("預設面板：一波傷害、打進去的比例與有效生命，和手算一致", async ({ page }) => {
-    const dmg = physBurst({ ad: 160, as: 1.1, crit: 25, critDmg: 1.75, haste: 10, armor: 85 })
+    const dmg = physBurst({ ad: 160, as: 1.1, crit: 25, critDmg: 2, haste: 10, armor: 85 })
     await expect(kpi(page, "一波傷害")).toHaveText(Math.round(dmg).toLocaleString())
     await expect(kpi(page, "打掉對手生命")).toHaveText(`${((dmg / 2300) * 100).toFixed(0)}%`)
     await expect(kpi(page, "實際打進去")).toHaveText(`${Math.round(10000 / 185)}% / ${Math.round(10000 / 155)}%`)
@@ -48,13 +48,13 @@ test.describe("出裝計算機", () => {
   test("改面板會重算：物攻 200、物理致命 18", async ({ page }) => {
     await field(page, "我的面板", "物攻").fill("200")
     await field(page, "我的面板", "物理致命").fill("18")
-    const dmg = physBurst({ ad: 200, as: 1.1, crit: 25, critDmg: 1.75, haste: 10, armor: 85, lethality: 18 })
+    const dmg = physBurst({ ad: 200, as: 1.1, crit: 25, critDmg: 2, haste: 10, armor: 85, lethality: 18 })
     await expect(kpi(page, "一波傷害")).toHaveText(Math.round(dmg).toLocaleString())
   })
 
   test("裝備效益：無盡之刃的整件提升和手算一致", async ({ page }) => {
-    const base = physBurst({ ad: 160, as: 1.1, crit: 25, critDmg: 1.75, haste: 10, armor: 85 })
-    const withIe = physBurst({ ad: 235, as: 1.1, crit: 50, critDmg: 2.05, haste: 10, armor: 85 })
+    const base = physBurst({ ad: 160, as: 1.1, crit: 25, critDmg: 2, haste: 10, armor: 85 })
+    const withIe = physBurst({ ad: 235, as: 1.1, crit: 50, critDmg: 2.3, haste: 10, armor: 85 })
     const gain = (withIe / base - 1) * 100
     const row = page.locator(".ag-row", { hasText: "無盡之刃" }).first()
     await page.getByPlaceholder("快速搜尋所有欄位…").fill("無盡之刃")
@@ -105,7 +105,7 @@ test.describe("出裝計算機", () => {
     const mage = (ap: number) => {
       const casts = 1 + (5 * 1.1) / 7
       const autos = 1.1 * 5 * 0.1
-      return (autos * 160 * 1.1875 * 100) / 185 + (casts * (750 + 2.2 * ap) * 100) / 155
+      return (autos * 160 * 1.25 * 100) / 185 + (casts * (750 + 2.2 * ap) * 100) / 155
     }
     const base = mage(300)
     const perK = (ap: number) => (((mage(ap) / base - 1) * 100) / 400) * 1000
@@ -127,7 +127,7 @@ test.describe("出裝計算機", () => {
       const autos = as * 6 * 0.9
       const casts = 1 + (6 * (1 + haste / 100)) / 8
       const procs = spellblade ? Math.min(casts, autos, 1 + 6 / 1.5) : 0
-      const raw = autos * ad * (1 + 0.25 * 0.75) + casts * (200 + ad) + procs * 2 * baseAd
+      const raw = autos * ad * (1 + 0.25 * 1) + casts * (200 + ad) + procs * 2 * baseAd
       return (raw * 100) / 185
     }
     // 三相之力：36 物攻、30% 攻速（× 成長 0.65）、15 技能加速

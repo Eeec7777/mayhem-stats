@@ -60,7 +60,7 @@ type State = {
 // 預設值：11 級左右、身上兩件裝的量級，打開就有一組能看的結果
 const DEFAULT_STATE: State = {
   me: {
-    level: 11, ad: 160, ap: 0, attackSpeed: 1.1, critChance: 25, critDamage: 1.75, lethality: 0, armorPenPct: 0,
+    level: 11, ad: 160, ap: 0, attackSpeed: 1.1, critChance: 25, critDamage: 2, lethality: 0, armorPenPct: 0,
     magicPen: 0, magicPenPct: 0, haste: 10, hp: 1900, armor: 70, mr: 45, mana: 600, ranged: false,
   },
   target: { level: 11, hp: 2300, armor: 85, mr: 55 },
@@ -83,7 +83,8 @@ function loadState(): State {
     return {
       ...DEFAULT_STATE,
       ...saved,
-      me: { ...DEFAULT_STATE.me, ...saved.me },
+      // 舊版預設把基礎暴擊傷害寫成 1.75（舊版本的數字）；遊戲資料與即時資料都是 2.0，舊存檔沒改過的直接更正
+      me: { ...DEFAULT_STATE.me, ...saved.me, ...(saved.me?.critDamage === 1.75 ? { critDamage: 2 } : {}) },
       target: { ...DEFAULT_STATE.target, ...saved.target },
       profile: { ...DEFAULT_STATE.profile, ...saved.profile },
       threat: { ...DEFAULT_STATE.threat, ...saved.threat },

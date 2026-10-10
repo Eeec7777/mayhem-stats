@@ -44,11 +44,11 @@ npm run typecheck:e2e                    # 測試本身的型別檢查（Playwri
 標成 `test.fail(...)` 的測試是「目前確實壞著」的行為：測試照正確的行為寫，現在預期失敗，所以套件是綠的；
 **問題修好之後它會「意外通過」而失敗**，提醒你把 `test.fail` 拿掉。
 
-| 測試 | 問題 |
-|---|---|
-| `explore.spec.ts` 自訂篩選：玩家對局數 大於 10 | 指標當條件時 Cube 產生 `HAVING COUNT(...) > ?`，值以字串 `'10'` 綁定，SQLite 裡整數 > 文字恆為假，`gt` 一律 0 列（`lt` 一律全中） |
-| `api.spec.ts` favicon.svg 載得到 | `app.py` 只把 `web/dist/assets` 掛在 `/assets`，`dist` 根目錄的 `favicon.svg`、`icons.svg` 回 404 |
-| `smoke.spec.ts` 768px 寬：對局紀錄、好友比較 | 頁面橫向溢出 50～256px（陣容頁 2026-10 改版後已修好） |
+目前沒有標成 `test.fail` 的測試。2026-10-10 修好的三項：
+
+- 自由探索的指標篩選（大於／小於）：Cube 把篩選值綁成字串，SQLite 裡整數和文字比較恆為假。`cube/cube.js` 的 `dialectClass` 把指標與數字維度的參數包成 `CAST(? AS REAL)`。
+- `favicon.svg`、`icons.svg` 404：`app.py` 另外開了這兩個固定檔名的路由。
+- 768px 寬的對局紀錄、好友比較橫向溢出：`SidebarInset` 加 `min-w-0`，對局卡片窄時換行。
 
 ## 檔案
 

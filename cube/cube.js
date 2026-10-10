@@ -68,8 +68,48 @@ class PooledSqliteDriver extends SqliteDriver {
   }
 }
 
+// 數字型篩選的參數要轉成數字再比。
+// Cube 把所有篩選值都綁成字串；欄位有 INTEGER 親和性時 SQLite 會自動轉，但「指標」（COUNT(...)、SUM(...)）
+// 和運算式沒有親和性，整數 > 文字在 SQLite 裡恆為假：自由探索的「玩家對局數 大於 10」一律 0 列、
+// 「小於」一律全中。
+// Cube 預設用 Rust 的 Tesseract 規劃器產生 SQL，套的是 sqlTemplates() 的 filters 範本；gt/gte/lt/lte 只用在數字比較
+// （日期區間有自己的 time_range_filter），所以這四個範本的參數一律包成 CAST(? AS REAL)。
+// 舊的 JS 規劃器（CUBEJS_TESSERACT_SQL_PLANNER=false）走 newFilter().castParameter()，一併照顧。
+// 設定名稱是 dialectFactory（寫成 dialectClass 會被 Cube 拒絕、整個起不來）。
+const { SqliteQuery } = require("@cubejs-backend/schema-compiler/dist/src/adapter/SqliteQuery")
+let NumericAwareFilter = null
+class MayhemSqliteQuery extends SqliteQuery {
+  sqlTemplates() {
+    const templates = super.sqlTemplates()
+    for (const [op, sign] of [["gt", ">"], ["gte", ">="], ["lt", "<"], ["lte", "<="]]) {
+      templates.filters[op] = `{{ column }} ${sign} CAST({{ param }} AS REAL)`
+    }
+    return templates
+  }
+
+  newFilter(filter) {
+    const base = super.newFilter(filter)
+    if (!NumericAwareFilter) {
+      // SqliteFilter 沒有匯出，從實例拿到它的類別再繼承，like 的不分大小寫等行為照舊
+      NumericAwareFilter = class extends base.constructor {
+        castParameter() {
+          let type = null
+          try {
+            type = this.definition()?.type
+          } catch {
+            /* 拿不到定義的（segment 之類）照舊 */
+          }
+          return this.measure || type === "number" ? "CAST(? AS REAL)" : super.castParameter()
+        }
+      }
+    }
+    return new NumericAwareFilter(this, filter)
+  }
+}
+
 module.exports = {
   driverFactory: () => new PooledSqliteDriver(),
+  dialectFactory: ({ dbType }) => (dbType === "sqlite" ? MayhemSqliteQuery : undefined),
   orchestratorOptions: {
     queryCacheOptions: { queueOptions: { concurrency: POOL_SIZE } },
   },

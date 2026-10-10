@@ -15,7 +15,7 @@ export type MyStats = {
   ap: number
   attackSpeed: number // 每秒普攻次數（面板上的攻速）
   critChance: number // %
-  critDamage: number // 倍率，預設 1.75
+  critDamage: number // 倍率：基礎 2.0（英雄資料 critDamageMultiplier），無盡之刃 +0.3
   lethality: number
   armorPenPct: number // %
   magicPen: number

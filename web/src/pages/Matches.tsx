@@ -639,9 +639,10 @@ function MatchCardChunk({
               </div>
             )}
 
-            {/* 固定單行、兩層堆疊：各區塊寬度固定（合計約 700px），中間兩段彈性空隙平分多出來的寬度。
-                容器變寬只會讓空隙變大，結構與順序在整頁、抽屜、好友比較的半版面板都一樣 */}
-            <div className="flex w-full min-w-0 items-center gap-x-2">
+            {/* 單行、兩層堆疊：各區塊寬度固定（合計約 700px），中間兩段彈性空隙平分多出來的寬度。
+                容器變寬只會讓空隙變大，結構與順序在整頁、抽屜、好友比較的半版面板都一樣。
+                容器不到 700px（768px 寬螢幕扣掉側邊欄、手機）時換行，後半段排到第二行，不會被切掉 */}
+            <div className="flex w-full min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5">
               <div className="relative shrink-0">
                 <img src={iconUrl(m.champion_icon)} alt="" title={m.champion_name} className="size-10 rounded-md bg-icon-tile" />
                 {tag && <ContribTagBadge tag={tag} className="absolute -left-1 -top-1 shadow-sm ring-1 ring-background" />}

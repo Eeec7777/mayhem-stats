@@ -8,10 +8,8 @@ type Fixtures = {
   writes: BlockedWrite[]
 }
 
-const IGNORED_FAILURES = [
-  // index.html 引用了不存在的 favicon.svg；不影響功能，另外處理
-  /\/favicon\.svg$/,
-]
+// 可以忽略的失敗請求（目前沒有；favicon.svg 的 404 已在 2026-10-10 修好）
+const IGNORED_FAILURES: RegExp[] = []
 
 /** 所有測試共用的 page：
  *  1. 寫入一律攔下、回假的成功。測試吃的是真實資料庫，不能真的去新增追蹤對象、綁帳號、觸發採集。

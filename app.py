@@ -757,6 +757,17 @@ def index():
     return FileResponse(BASE_DIR / "index.html")
 
 
+# dist 根目錄的圖示（index.html 的分頁圖示引用 /favicon.svg）。只開這兩個固定檔名，
+# 不把整個 dist 掛成靜態目錄——那樣 /index.html 之類的路徑會繞過下面頁面路由的白名單。
+@app.get("/favicon.svg")
+@app.get("/icons.svg")
+def root_icon(request: Request):
+    path = WEB_DIST / request.url.path.lstrip("/")
+    if not path.is_file():
+        return Response(status_code=404)
+    return FileResponse(path, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
+
+
 @app.get("/{page}")
 def page_index(page: str):
     if page not in {"dashboard", "matches", "champions", "augments", "lineups", "players", "crew",

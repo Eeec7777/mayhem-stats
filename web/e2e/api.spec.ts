@@ -283,11 +283,12 @@ test.describe("靜態檔與路由", () => {
     expect((await request.get("/no-such-page")).status()).toBe(404)
   })
 
-  test("favicon.svg 載得到（已知問題）", async ({ request }) => {
-    // 已知問題：app.py 只把 web/dist/assets 掛在 /assets，根目錄的 favicon.svg、icons.svg 沒人送，瀏覽器分頁沒有圖示、每次載入多一個 404。
-    // 修好之後這個測試會變成「意外通過」而失敗，到時候拿掉 test.fail，並把 fixtures.ts 的 IGNORED_FAILURES 清掉。
-    test.fail(true, "後端沒有送 dist 根目錄的 favicon.svg")
-    expect((await request.get("/favicon.svg")).status()).toBe(200)
+  test("favicon.svg、icons.svg 載得到，型別是 SVG", async ({ request }) => {
+    for (const path of ["/favicon.svg", "/icons.svg"]) {
+      const res = await request.get(path)
+      expect(res.status(), path).toBe(200)
+      expect(res.headers()["content-type"], path).toContain("image/svg+xml")
+    }
   })
 
   test("服務的是 web/dist 的打包結果：index.html 引用的 JS 與 CSS 都載得到", async ({ request }) => {

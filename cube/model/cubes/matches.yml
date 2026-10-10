@@ -51,7 +51,10 @@ cubes:
       - name: played_at
         title: 對局時間
         description: "開打時間（UTC 時間戳）。用日期區間篩選時，查詢要帶 \"timezone\": \"Asia/Taipei\"，否則區間邊界會差 8 小時。按天分組請改用 local_date。"
-        sql: "datetime({CUBE}.game_creation / 1000, 'unixepoch')"
+        # 格式必須是 ISO 的「T」：Cube 的區間篩選在 SQLite 上是拿這欄和 strftime('%Y-%m-%dT%H:%M:%f', ?) 比字串。
+        # 原本用 datetime() 產生「2026-10-02 16:06:53」，空格排在 T 前面，起始日那個 UTC 日期的場次
+        # （台北凌晨 0～8 點）整天被排除、結束日之後的凌晨反而被算進來（2026-10-10 實測 10/3～10/9 少 4 場）。
+        sql: "strftime('%Y-%m-%dT%H:%M:%f', {CUBE}.game_creation / 1000.0, 'unixepoch')"
         type: time
         meta:
           group: 時間

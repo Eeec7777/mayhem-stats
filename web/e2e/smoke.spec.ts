@@ -30,9 +30,9 @@ test.describe("每個主題 × 有圖表的頁面", () => {
 })
 
 // 已知會橫向溢出的頁。列進來的頁用 test.fail：修好之後該頁的測試會「意外通過」而失敗，屆時把頁名拿掉。
-// 768px：對局紀錄的卡片列固定寬度合計超過內容區（溢出約 50px），好友比較的全員一覽表格沒有放進自己的捲動容器（約 256px）。
-// 陣容頁原本也在名單上，2026-10 改版成森林圖、矩陣收進自己的捲動容器之後不再溢出。
-const KNOWN_OVERFLOW: Record<number, Set<PageId>> = { 390: new Set(), 768: new Set<PageId>(["matches", "crew"]) }
+// 768px 的對局紀錄與好友比較曾經溢出：根源是側邊欄右邊的 SidebarInset 是 flex 子元素、預設 min-width: auto，
+// 內容一寬就整塊被推出視窗。2026-10-10 加上 min-w-0、對局卡片窄時換行之後修好，目前沒有已知會溢出的頁。
+const KNOWN_OVERFLOW: Record<number, Set<PageId>> = { 390: new Set(), 768: new Set() }
 
 test.describe("窄螢幕：頁面本身不橫向溢出（表格與矩陣要在自己的容器裡捲動）", () => {
   for (const width of [390, 768]) {

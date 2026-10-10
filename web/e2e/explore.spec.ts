@@ -158,17 +158,20 @@ test.describe("自由探索：自由組合", () => {
     await expect(side(page, "自訂篩選").getByText(`英雄 等於 ${top.name}`)).toBeVisible()
   })
 
-  test("自訂篩選的結果：玩家對局數 大於 10 → 只剩 10 場以上的英雄（已知問題）", async ({ page }) => {
-    // 已知問題：指標當條件時，Cube 產生 HAVING COUNT(...) > ?，值卻是字串 ''10''，
-    // SQLite 裡「整數 > 文字」永遠為假，所以 gt 一律 0 列（lt 則一律全中）。修好之後這個測試會變成「意外通過」而失敗，
-    // 到時候把下面這行 test.fail 拿掉即可。
-    test.fail(true, "指標篩選 gt/lt 的值以字串綁定，SQLite 比較恆為假")
-    await seedViews(page, [[{ member: "participants.games", operator: "gt", values: ["10"] }]])
-    await page.getByRole("button", { name: "檢視0", exact: true }).click()
-    await expect
-      .poll(async () => (await gridColumn(page, "participants.games")).length, { timeout: 4000 })
-      .toBe(myChampions().filter((r) => Number(r.n) > 10).length)
-  })
+  // 指標當條件時 Cube 產生 HAVING COUNT(...) > ?，值綁成字串；SQLite 裡「整數 > 文字」恆為假，
+  // 曾經 gt 一律 0 列、lt 一律全中。cube.js 的 dialectClass 把數字型篩選的參數包成 CAST(? AS REAL) 修好（2026-10-10）。
+  for (const [op, label, keep] of [
+    ["gt", "大於", (n: number) => n > 10],
+    ["lt", "小於", (n: number) => n < 10],
+  ] as const) {
+    test(`自訂篩選的結果：玩家對局數 ${label} 10 → 只剩符合的英雄`, async ({ page }) => {
+      await seedViews(page, [[{ member: "participants.games", operator: op, values: ["10"] }]])
+      await page.getByRole("button", { name: "檢視0", exact: true }).click()
+      await expect
+        .poll(async () => (await gridColumn(page, "participants.games")).length, { timeout: 8000 })
+        .toBe(myChampions().filter((r) => keep(Number(r.n))).length)
+    })
+  }
 
   test("自訂篩選：運算子選「有值」時值欄位停用", async ({ page }) => {
     const f = side(page, "自訂篩選")

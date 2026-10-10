@@ -68,7 +68,7 @@ cubes:
         type: number
 
       - name: played_at
-        sql: "datetime({CUBE}.game_creation / 1000, 'unixepoch')"
+        sql: "strftime('%Y-%m-%dT%H:%M:%f', {CUBE}.game_creation / 1000.0, 'unixepoch')"
         type: time
 
       # 字串型別是刻意的：這是運算式、沒有欄位型別親和性，
