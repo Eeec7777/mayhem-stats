@@ -4,7 +4,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { EmptyState, Panel } from "@/components/primitives"
 import { DrillPanel, MAX_GAME_IDS } from "@/components/MatchList"
 import { GapForest, Findings, ForestAxis, ForestLegend, ForestTrack } from "@/components/GapForest"
-import { binomialP, gapOf, reachOf, strengthOf, zFor, type GapRow, type Strength } from "@/lib/gap"
+import { STRENGTH_CLASS, binomialP, gapOf, reachOf, strengthOf, zFor, type GapRow } from "@/lib/gap"
 import { WhoSwitch } from "@/components/WhoSwitch"
 import { useCube } from "@/hooks/useCube"
 import { num, type CubeFilter, type CubeRow } from "@/lib/cube"
@@ -281,13 +281,7 @@ const ARCHETYPES = [
   },
 ] as const
 
-const VERDICT_CLASS: Record<Strength, string> = {
-  強勢: "border-win/50 bg-win/15 text-win font-semibold",
-  偏強: "border-dashed border-win/40 text-win",
-  看不出: "border-dashed text-muted-foreground",
-  偏弱: "border-dashed border-loss/40 text-loss",
-  不強勢: "border-loss/50 bg-loss/15 text-loss font-semibold",
-}
+const VERDICT_CLASS = STRENGTH_CLASS
 
 /** 每種原型的強弱：一個「所有隊伍」（兩隊都算，資料量最大）、一個「你們」（目前看誰的範圍）。
  *  判定只看所有隊伍；強勢／不強勢要區間（已依一次比較三組校正）整段在 50% 的同一邊才給。 */

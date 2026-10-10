@@ -343,6 +343,16 @@ cubes:
           decimals: 0
           higherIsBetter: true
 
+      # 算「隊內貢獻平均」的誤差範圍要用有分數的場數：6 分鐘內的重開局沒有分數，participants.games 會多算。
+      # count_distinct 主鍵：和增幅這種一場多列的維度一起查時也不會重複計算
+      - name: scored_games
+        title: 有隊內貢獻的場次
+        description: "這些場次裡有隊內貢獻分數的場數（6 分鐘內的重開局不計分，所以可能比場次少）。算隊內貢獻平均的誤差範圍（標準誤＝單場標準差約 27 ÷ √場數）時，樣本數用這個。"
+        sql: "CASE WHEN {CUBE}.score IS NOT NULL THEN {CUBE}.participant_rowid END"
+        type: count_distinct
+        meta:
+          group: 貢獻
+
       - name: dmg_pct
         title: 隊內・輸出
         description: "對英雄傷害佔隊伍比例（除以依陣容算的期望份額）在同類型的人裡的百分位（50＝中位數）。"

@@ -68,6 +68,41 @@ export function strengthOf(gap: Gap): Strength {
   return "看不出"
 }
 
+/** 五級判定的標籤樣式：實心＝看得出差別，虛線＝還在誤差內。陣容、好友比較共用 */
+export const STRENGTH_CLASS: Record<Strength, string> = {
+  強勢: "border-win/50 bg-win/15 text-win font-semibold",
+  偏強: "border-dashed border-win/40 text-win",
+  看不出: "border-dashed text-muted-foreground",
+  偏弱: "border-dashed border-loss/40 text-loss",
+  不強勢: "border-loss/50 bg-loss/15 text-loss font-semibold",
+}
+
+/** 單場隊內貢獻扣掉每個人自己的平均之後的標準差（2026-10 實測 27.2，好友 7 人、1681 場；analysis/crew_verdicts.py）。
+ *  「隊內貢獻平均」的標準誤 = CONTRIB_SD ÷ √有分數的場數。 */
+export const CONTRIB_SD = 27
+
+export type ScoreGap = { mean: number; diff: number; interval: [number, number] | null; clear: boolean }
+
+/** 隊內貢獻的平均和同類型的中位數（50）比：差幾分、95% 區間（z 可放寬，見 zFor），以及區間是否整段在 50 的同一邊。
+ *  n 用「有隊內貢獻的場次」（contribution.scored_games；重開局沒有分數）。不到 MIN_N 場不給區間。 */
+export function scoreGapOf(mean: number, n: number, z = 1.96): ScoreGap {
+  const diff = mean - 50
+  if (n < MIN_N) return { mean, diff, interval: null, clear: false }
+  const half = (z * CONTRIB_SD) / Math.sqrt(n)
+  const interval: [number, number] = [diff - half, diff + half]
+  return { mean, diff, interval, clear: interval[0] > 0 || interval[1] < 0 }
+}
+
+/** 隊內貢獻的五級判定：區間整段高於／低於 50 才是強勢／不強勢；差 lean 分以上但還在誤差內是偏強／偏弱。
+ *  lean 預設 6，和 hooks/useContribution 的 CONTRIB_GAP 一致（單場標準差約 29 時的「看得出的差距」）。 */
+export function scoreStrengthOf(g: ScoreGap, lean = 6): Strength {
+  if (g.interval === null) return "看不出"
+  if (g.clear) return g.diff > 0 ? "強勢" : "不強勢"
+  if (g.diff >= lean) return "偏強"
+  if (g.diff <= -lean) return "偏弱"
+  return "看不出"
+}
+
 /** 精確二項檢定（雙尾），虛無假設 p = 0.5：n 場裡贏 x 場，有多罕見。 */
 export function binomialP(x: number, n: number) {
   if (!n) return 1

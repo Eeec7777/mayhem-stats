@@ -252,6 +252,8 @@ views:
             alias: performance_heal
           - name: score
             alias: contribution_score
+          - name: scored_games
+            alias: contribution_scored_games
           - name: dmg_pct
             alias: contribution_damage
           - name: soak_pct
