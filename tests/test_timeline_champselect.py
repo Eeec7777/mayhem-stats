@@ -171,6 +171,12 @@ class CollectorPhaseTests(unittest.IsolatedAsyncioTestCase):
         gatherer = self.make("ChampSelect")
         self.assertEqual(gatherer._poll_interval(), collector.CHAMP_SELECT_POLL_INTERVAL)
 
+    def test_queue_and_lobby_poll_faster_so_champ_select_start_is_caught(self):
+        for phase in ("Matchmaking", "ReadyCheck"):
+            self.assertEqual(self.make(phase)._poll_interval(), collector.CHAMP_SELECT_POLL_INTERVAL)
+        self.assertEqual(self.make("Lobby")._poll_interval(), collector.FAST_POLL_INTERVAL)
+        self.assertEqual(self.make("None")._poll_interval(), collector.POLL_INTERVAL)
+
     async def test_champ_select_is_captured_and_errors_are_swallowed(self):
         gatherer = self.make("ChampSelect")
         with mock.patch.object(collector.db, "store_champ_select", return_value=True) as store, \
@@ -194,6 +200,35 @@ class CollectorPhaseTests(unittest.IsolatedAsyncioTestCase):
         gatherer._ingest_due = time.monotonic() - 1  # 時間到
         await self.tick(gatherer, FakeClient("EndOfGame"))
         self.assertEqual(gatherer.ingests, ["realtime"])
+        # 假的採集回傳 0 場新對局：排一分鐘後重試
+        self.assertGreater(gatherer._ingest_due, time.monotonic() + collector.REALTIME_RETRY_DELAY - 5)
+
+    async def test_realtime_ingest_retries_twice_when_history_is_not_ready(self):
+        gatherer = self.make("Lobby")
+        results = [0, 0, 0]
+
+        async def record(trigger):
+            gatherer.ingests.append(trigger)
+            return results.pop(0)
+
+        gatherer._run_ingest = record
+        for _ in range(3):
+            gatherer._ingest_due = time.monotonic() - 1
+            await self.tick(gatherer, FakeClient("Lobby"))
+        self.assertEqual(gatherer.ingests, ["realtime"] * 3)
+        self.assertIsNone(gatherer._ingest_due)  # 第三次還是 0 就放棄，交給 5 分鐘的補掃
+        self.assertEqual(gatherer._realtime_retries, 0)
+
+    async def test_realtime_ingest_stops_retrying_once_the_game_is_in(self):
+        gatherer = self.make("Lobby")
+
+        async def record(trigger):
+            gatherer.ingests.append(trigger)
+            return 1
+
+        gatherer._run_ingest = record
+        gatherer._ingest_due = time.monotonic() - 1
+        await self.tick(gatherer, FakeClient("Lobby"))
         self.assertIsNone(gatherer._ingest_due)
 
 

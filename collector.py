@@ -21,6 +21,9 @@ POLL_INTERVAL = 30          # 秒
 FAST_POLL_INTERVAL = 5
 # 選角：大亂鬥的選角只有一分多鐘，板凳換英雄、交換都很快，2 秒一次才記得到中間的變化
 CHAMP_SELECT_POLL_INTERVAL = 2
+# 打完後的即時採集沒抓到新對局時，隔多久再試、最多試幾次
+REALTIME_RETRY_DELAY = 60
+REALTIME_RETRIES = 2
 # 每輪最多補抓幾場時間軸（新入庫的場次抓失敗時，下一輪再試；不回補開始收之前的舊場次）
 TIMELINE_RETRY_PER_RUN = 10
 SWEEP_EVERY = 300           # 秒：補漏掃描固定每 5 分鐘；輪詢間隔會變，所以用時間算、不再數輪數
@@ -30,6 +33,10 @@ IN_GAME_PHASES = {"GameStart", "InProgress", "Reconnect", "WaitingForStats", "Pr
 # 賽後畫面存在的階段：這時才抓得到 /lol-end-of-game/v1/eog-stats-block（見 _capture_eog）
 EOG_PHASES = {"WaitingForStats", "PreEndOfGame", "EndOfGame"}
 CHAMP_SELECT_PHASES = {"ChampSelect"}
+# 進選角之前的階段：閒置時 30 秒才看一次，常常進選角二三十秒後才發現，前面選英雄、換板凳的過程就漏了
+# （2026-10-10 第一場的第一筆快照已經在 FINALIZATION）。排隊配對與接受對戰時用選角的間隔，大廳用 5 秒。
+QUEUE_PHASES = {"Matchmaking", "ReadyCheck"}
+LOBBY_PHASES = {"Lobby"}
 
 
 class Collector:
@@ -50,6 +57,7 @@ class Collector:
         # 剛打完一場時，「什麼時候該採集」的時間點。原本是在 _tick 裡整整 sleep 20 秒，
         # 那 20 秒內不會再抓賽後統計，賽後畫面還沒算完的話就漏掉了；改成記下時間，每輪照常抓、時間到再採集
         self._ingest_due = None
+        self._realtime_retries = 0  # 打完後的即時採集沒抓到新對局，已經重試幾次
         self._timeline_failures = {}  # (platform_id, game_id) -> 失敗次數；同一個行程裡失敗太多次就不再試
         self.on_change = None
 
@@ -249,11 +257,11 @@ class Collector:
             await asyncio.sleep(self._poll_interval())
 
     def _poll_interval(self):
-        """選角 2 秒；對局中與賽後階段 5 秒（抓得到賽後統計）；其餘時間 30 秒。"""
+        """選角與排隊 2 秒；大廳、對局中與賽後階段 5 秒（抓得到賽後統計）；其餘時間 30 秒。"""
         phase = self.status.get("phase")
-        if phase in CHAMP_SELECT_PHASES:
+        if phase in CHAMP_SELECT_PHASES | QUEUE_PHASES:
             return CHAMP_SELECT_POLL_INTERVAL
-        busy = self._saw_in_game or self._ingest_due is not None or phase in (IN_GAME_PHASES | EOG_PHASES)
+        busy = self._saw_in_game or self._ingest_due is not None or phase in (IN_GAME_PHASES | EOG_PHASES | LOBBY_PHASES)
         return FAST_POLL_INTERVAL if busy else POLL_INTERVAL
 
     async def _tick(self):
@@ -295,7 +303,14 @@ class Collector:
 
         if self._ingest_due is not None and time.monotonic() >= self._ingest_due:
             self._ingest_due = None
-            await self._run_ingest("realtime")
+            new = await self._run_ingest("realtime")
+            # 打完 20 秒時客戶端的戰績常常還沒寫好（2026-10-10 實測要等到 5 分鐘後的補掃才進來），
+            # 沒抓到新對局就隔一分鐘再試，最多再試兩次
+            if new == 0 and self._realtime_retries < REALTIME_RETRIES:
+                self._realtime_retries += 1
+                self._ingest_due = time.monotonic() + REALTIME_RETRY_DELAY
+            else:
+                self._realtime_retries = 0
             return
 
         if time.monotonic() - self._last_sweep >= SWEEP_EVERY:
