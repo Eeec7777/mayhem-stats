@@ -128,7 +128,7 @@ function expectedCells(puuid: string): Record<string, Cell> {
 }
 
 const matrixRows = (page: Page) => panel(page, "全員一覽").getByTestId("crew-row")
-const nameButton = (row: Locator) => row.locator("button").first()
+const nameButton = (row: Locator) => row
 /** 這一列是哪位好友（用名字欄的文字對） */
 async function memberOf(row: Locator) {
   const text = await nameButton(row).innerText()
@@ -137,26 +137,27 @@ async function memberOf(row: Locator) {
   return m!
 }
 
-test.describe("好友比較頁：全員一覽（出裝定位矩陣）", () => {
+test.describe("好友比較頁：全員一覽", () => {
   test.beforeEach(async ({ page }) => {
     await openPage(page, "crew")
     await expect(matrixRows(page).first()).toBeVisible()
   })
 
-  test("最上面一列「全體參賽者」是參照：場次與八種出裝的比例對 SQL，不是按鈕", async ({ page }) => {
+  test("最上面一列「全體參賽者」是參照：場次對 SQL，雷達八種出裝的場次對 SQL，不是按鈕", async ({ page }) => {
     const ref = page.getByTestId("crew-reference-row")
     await expect(ref).toContainText("參照")
     const total = Number(sql(`SELECT COUNT(*) n FROM match_participants p JOIN matches m USING (platform_id, game_id) WHERE m.queue_id = 2400`)[0].n)
     await expect(ref).toContainText(`${total} 場`)
-    for (const role of ROLES) {
-      const n = Number(
-        sql(
-          `SELECT COUNT(*) n FROM match_participants p JOIN matches m USING (platform_id, game_id)
-             JOIN mat_builds b ON b.participant_rowid = p.rowid WHERE m.queue_id = 2400 AND b.build_role = ?`,
-          [role],
-        )[0].n,
-      )
-      await expect(ref.locator(`[title*="是${role}"]`)).toContainText(`${Math.round((100 * n) / total)}%`)
+    const tip = (await ref.locator("svg title").textContent())!
+    const lines = [...tip.matchAll(/^(\S+(?: \S+)?) \d+%（(\d+) 場/gm)].map((m) => ({ label: m[1], games: Number(m[2]) }))
+    expect(lines).toHaveLength(8)
+    for (const l of lines) {
+      const n = sql(
+        `SELECT COUNT(*) n FROM match_participants p JOIN matches m USING (platform_id, game_id)
+           JOIN mat_builds b ON b.participant_rowid = p.rowid WHERE m.queue_id = 2400 AND b.build_role = ?`,
+        [l.label],
+      )[0].n
+      expect(l.games, l.label).toBe(Number(n))
     }
     await expect(ref.locator("button")).toHaveCount(0)
   })
@@ -177,20 +178,18 @@ test.describe("好友比較頁：全員一覽（出裝定位矩陣）", () => {
     expect(games).toEqual([...games].sort((a, b) => b - a))
   })
 
-  test("每一格的場次、隊內貢獻與判定（區間）都和獨立計算一致；上方的摘要句子也是", async ({ page }) => {
+  test("出裝標籤（強勢／偏強／偏弱／不強勢）與整體判定都和獨立計算一致；上方的摘要句子也是", async ({ page }) => {
     let strong = 0
     let weak = 0
     let judged = 0
     for (const row of await matrixRows(page).all()) {
       const m = await memberOf(row)
       const exp = expectedCells(m.puuid)
-      for (const cell of await row.getByTestId("crew-cell").all()) {
-        const label = (await cell.getAttribute("data-label"))!
-        const e = exp[label]
-        expect(Number(await cell.getAttribute("data-games")), `${label} 場次`).toBe(e.games)
-        expect(await cell.getAttribute("data-strength"), `${label} 判定`).toBe(e.strength)
-        await expect(cell.locator("span").first()).toHaveText(e.score === null ? "—" : String(e.score))
-      }
+      const shown = await row.getByTestId("crew-role-chip").evaluateAll((els) => els.map((e) => `${(e as HTMLElement).dataset.label}:${(e as HTMLElement).dataset.strength}`))
+      const want = ROLES.filter((r) => exp[r].strength !== "看不出").map((r) => `${r}:${exp[r].strength}`)
+      expect([...shown].sort(), nameOf(m.riot_id)).toEqual([...want].sort())
+      await expect(row.getByTestId("crew-overall")).toHaveAttribute("data-strength", exp["整體"].strength)
+      await expect(row.getByTestId("crew-overall")).toContainText(`隊內貢獻 ${exp["整體"].score}`)
       for (const role of ROLES) {
         const e = exp[role]
         if (e.scored >= 5 && e.score !== null) judged++
@@ -199,24 +198,36 @@ test.describe("好友比較頁：全員一覽（出裝定位矩陣）", () => {
       }
     }
     await expect(page.getByTestId("crew-matrix-summary")).toHaveText(
-      `${judged} 格有 5 場以上，看得出強弱的有 ${strong + weak} 格（強勢 ${strong}、不強勢 ${weak}），其餘差距都還在誤差內。`,
+      `各出裝裡 ${judged} 格有 5 場以上，看得出強弱的有 ${strong + weak} 格（強勢 ${strong}、不強勢 ${weak}），其餘差距都還在誤差內。`,
     )
+  })
+
+  test("出裝標籤前面是 1、2、3… 連續的名次，看得出的排在還在誤差內的前面", async ({ page }) => {
+    for (const row of await matrixRows(page).all()) {
+      const chips = await row.getByTestId("crew-role-chip").evaluateAll((els) =>
+        els.map((e) => ({ rank: (e.firstElementChild as HTMLElement).innerText, strength: (e as HTMLElement).dataset.strength! })),
+      )
+      const pos = chips.filter((c) => c.strength === "強勢" || c.strength === "偏強")
+      const neg = chips.filter((c) => c.strength === "不強勢" || c.strength === "偏弱")
+      for (const list of [pos, neg]) {
+        expect(list.map((c) => c.rank)).toEqual(list.map((_, i) => String(i + 1)))
+        const firstLean = list.findIndex((c) => c.strength === "偏強" || c.strength === "偏弱")
+        if (firstLean >= 0) expect(list.slice(firstLean).every((c) => c.strength === "偏強" || c.strength === "偏弱")).toBe(true)
+      }
+    }
   })
 
   test("圖例與「怎麼判斷的」：五級判定、▲▼ 勝率補充、為什麼不再用適合／不適合", async ({ page }) => {
     const box = panel(page, "全員一覽")
-    for (const t of [/強勢：比同類型強/, /偏強：高 6 分以上/, /不強勢：比同類型弱/, /勝率比他自己的平均明顯高／低/]) {
+    for (const t of [/比同類型強（看得出）/, /高 6 分以上，還在誤差內/, /比同類型弱（看得出）/, /勝率比他自己的平均明顯高／低/]) {
       await expect(box.getByText(t)).toBeVisible()
     }
     await box.getByText(/怎麼判斷的/).click()
     await expect(box.getByText(/舊版的「適合／不適合」用固定門檻/)).toBeVisible()
   })
 
-  test("英雄分頁：每人比同類型強／弱的英雄，「N 隻・看得出 M」與頭像數和獨立計算一致", async ({ page }) => {
-    await panel(page, "全員一覽").getByRole("radio", { name: "英雄" }).click()
-    const rows = panel(page, "全員一覽").getByTestId("crew-champ-row")
-    await expect(rows).toHaveCount(crewMembers().length)
-    for (const row of await rows.all()) {
+  test("英雄頭像：每人比同類型強／弱的英雄各最多 5 隻，數量和獨立計算一致", async ({ page }) => {
+    for (const row of await matrixRows(page).all()) {
       const m = await memberOf(row)
       const champs = sql(
         `SELECT p.champion_id, COUNT(c.score) scored, AVG(c.score) score FROM match_participants p JOIN matches mm USING (platform_id, game_id)
@@ -225,13 +236,11 @@ test.describe("好友比較頁：全員一覽（出裝定位矩陣）", () => {
       ).filter((r) => r.score !== null)
       const z = zFor(champs.filter((r) => Number(r.scored) >= 5).length)
       const st = champs.map((r) => strengthOf(Number(r.score), Number(r.scored), z))
-      const k = champs.filter((r) => Number(r.scored) >= 5).length
-      const clear = st.filter((s) => s === "強勢" || s === "不強勢").length
-      await expect(row).toContainText(`${k} 隻・看得出 ${clear}`)
-      const pos = st.filter((s) => s === "強勢" || s === "偏強").length
-      const neg = st.filter((s) => s === "不強勢" || s === "偏弱").length
-      await expect(row.locator("> *").nth(1).getByTestId("crew-champ")).toHaveCount(Math.min(5, pos))
-      await expect(row.locator("> *").nth(2).getByTestId("crew-champ")).toHaveCount(Math.min(5, neg))
+      const pos = st.filter((x) => x === "強勢" || x === "偏強").length
+      const neg = st.filter((x) => x === "不強勢" || x === "偏弱").length
+      const sides = row.locator("> span").nth(3).locator("> span")
+      await expect(sides.nth(0).getByTestId("crew-champ")).toHaveCount(Math.min(5, pos))
+      await expect(sides.nth(1).getByTestId("crew-champ")).toHaveCount(Math.min(5, neg))
     }
   })
 })
@@ -270,18 +279,18 @@ test.describe("好友比較頁：抽屜（四個分頁）", () => {
     await expect(charts(drawer)).toHaveCount(1)
   })
 
-  test("出裝定位分頁：八種出裝一列一個，判定和矩陣同一列的格子一致", async ({ page }) => {
+  test("出裝定位分頁：八種出裝一列一個，判定和一覽表同一列的標籤一致", async ({ page }) => {
     const row = matrixRows(page).first()
-    const cells = new Map<string, string>()
-    for (const c of await row.getByTestId("crew-cell").all()) cells.set((await c.getAttribute("data-label"))!, (await c.getAttribute("data-strength"))!)
-    await nameButton(row).click()
+    const chips = new Map<string, string>()
+    for (const c of await row.getByTestId("crew-role-chip").all()) chips.set((await c.getAttribute("data-label"))!, (await c.getAttribute("data-strength"))!)
+    await row.click()
     const drawer = page.getByRole("dialog")
     await drawer.getByRole("tab", { name: "出裝定位" }).click()
     const rows = drawer.getByTestId("role-row")
     await expect(rows).toHaveCount(8)
     for (const r of await rows.all()) {
       const label = (await r.getAttribute("data-label"))!
-      if (cells.has(label)) expect(await r.getAttribute("data-strength"), label).toBe(cells.get(label))
+      if (chips.has(label)) expect(await r.getAttribute("data-strength"), label).toBe(chips.get(label))
     }
   })
 
@@ -303,24 +312,6 @@ test.describe("好友比較頁：抽屜（四個分頁）", () => {
     await expect(crumbs(page)).toContainText("的每一場")
     await first.click()
     await expect(first).toHaveAttribute("aria-expanded", "false")
-  })
-
-  test("點矩陣的一格：抽屜直接開在「英雄」分頁、只列那種出裝的英雄（場次加總 = 那格的場次）；「全部出裝」恢復", async ({ page }) => {
-    const row = matrixRows(page).first()
-    // 第一個有場次的出裝格（整體格開的是總覽）
-    const cell = row.locator("[data-testid=crew-cell]:not([data-label='整體'])").first()
-    const label = (await cell.getAttribute("data-label"))!
-    const n = Number(await cell.getAttribute("data-games"))
-    await cell.click()
-    const drawer = page.getByRole("dialog")
-    await expect(drawer.getByRole("tab", { name: "英雄" })).toHaveAttribute("data-state", "active")
-    await expect(crumbs(page)).toContainText(label)
-    const rows = drawer.locator("button[aria-expanded]")
-    await expect(rows.first()).toBeVisible()
-    const games = (await rows.allInnerTexts()).map((t) => Number(t.match(/(\d+) 場/)![1]))
-    expect(games.reduce((a, b) => a + b, 0)).toBe(n)
-    await drawer.getByRole("button", { name: "全部出裝" }).click()
-    await expect(crumbs(page)).not.toContainText(label)
   })
 
   test("總覽的雷達點一個出裝定位 → 切到「英雄」分頁、只剩那種出裝", async ({ page }) => {

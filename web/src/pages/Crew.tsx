@@ -33,7 +33,7 @@ import {
   type ScoreGap,
   type Strength,
 } from "@/lib/gap"
-import { BUILD_ROLES, NO_LIMIT, round0, splitRiotId } from "./shared"
+import { BUILD_ROLES, BUILD_SHORT, NO_LIMIT, round0, splitRiotId } from "./shared"
 
 // ── 判斷：和陣容、敗因、節奏三頁同一套「區間」講法 ─────────────────────────────
 // 隊內貢獻（contribution.score）是同類型（出裝定位 × 英雄官方主定位）裡的名次百分位，同類型的中位數＝50；
@@ -195,14 +195,14 @@ function StrengthChip({ j }: { j: Judged }) {
   )
 }
 
-// ── 全員一覽：出裝定位矩陣 ──────────────────────────────────────────────────
+// ── 全員一覽：一人一列（迷你雷達、出裝標籤、英雄頭像）────────────────────────
 
-const CELL_CLASS: Record<Strength, string> = {
-  強勢: "border-win/50 bg-win/20",
-  偏強: "border-dashed border-win/45 bg-win/[0.07]",
-  看不出: "border-border/70 bg-muted/20",
-  偏弱: "border-dashed border-loss/45 bg-loss/[0.07]",
-  不強勢: "border-loss/50 bg-loss/20",
+const DOT_CLASS: Record<Strength, string> = {
+  強勢: "fill-win",
+  偏強: "fill-win",
+  看不出: "fill-muted-foreground",
+  偏弱: "fill-loss",
+  不強勢: "fill-loss",
 }
 const NUM_CLASS: Record<Strength, string> = {
   強勢: "text-win",
@@ -211,71 +211,103 @@ const NUM_CLASS: Record<Strength, string> = {
   偏弱: "text-loss",
   不強勢: "text-loss",
 }
-/** 格子底下的細條：這種出裝佔他場次的比例，60% 畫滿（全部人同一把尺，上下可以比偏好） */
-const SHARE_FULL = 0.6
 
-/** 一人一列、一種出裝一欄。class 寫成完整字串（Tailwind 掃不到拼出來的） */
-const MATRIX_COLS = "grid-cols-[minmax(9rem,13rem)_4.5rem_repeat(8,minmax(3.5rem,1fr))]"
+/** 一人一列的格線，class 寫成完整字串（Tailwind 掃不到拼出來的） */
+const ROW_COLS = "grid-cols-[13rem_6rem_minmax(0,1fr)_minmax(0,1fr)]"
 
-function ShareBar({ share }: { share: number }) {
-  if (share <= 0) return null
+type HexDatum = { label: string; games: number; strength: Strength | null }
+
+/** 迷你雷達（出裝定位八個頂點）：形狀是各出裝定位佔他自己場次的比例（偏好怎麼玩），頂點顏色是判定。
+ *
+ *  一覽表裡每人一個，上下排成一欄就能一眼比形狀。用 SVG 而不是 ECharts：七個 canvas 實例的成本不值得，
+ *  這裡也不需要互動。外框是「他自己最常用的那種出裝」，形狀才撐得開。 */
+function MiniHex({ data, total, size = 96 }: { data: HexDatum[]; total: number; size?: number }) {
+  const c = size / 2
+  const r = size / 2 - 14 // 留位置給標籤
+  const n = data.length
+  const at = (i: number, frac: number) => {
+    const a = ((90 + (i * 360) / n) * Math.PI) / 180 // 和 ECharts 雷達同方向：正上方開始、逆時針
+    return [c + Math.cos(a) * r * frac, c - Math.sin(a) * r * frac] as const
+  }
+  const ring = (frac: number) => data.map((_, i) => at(i, frac).join(",")).join(" ")
+  const share = data.map((d) => (total ? d.games / total : 0))
+  const scaleMax = Math.max(0.01, ...share)
+  const tone = (d: HexDatum) => (d.strength ? DOT_CLASS[d.strength] : "fill-muted-foreground")
+  const text = data
+    .map((d, i) => `${d.label} ${Math.round(share[i] * 100)}%（${d.games} 場${d.strength && d.strength !== "看不出" ? `，${d.strength}` : ""}）`)
+    .join("\n")
   return (
-    <span className="absolute inset-x-1.5 bottom-1 h-[2px] overflow-hidden rounded-full bg-muted">
-      <span className="block h-full rounded-full bg-data/80" style={{ width: `${Math.max(6, Math.min(1, share / SHARE_FULL) * 100)}%` }} />
+    // 八個頂點時左右兩端的標籤會貼到邊，overflow 放出去（欄與欄之間有 gap，不會壓到別人）
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="shrink-0 overflow-visible">
+      <title>{`各出裝定位佔他場次的比例\n${text}`}</title>
+      <polygon points={ring(1)} className="fill-muted/30 stroke-muted-foreground/40" strokeWidth={1} />
+      <polygon points={ring(0.5)} className="fill-none stroke-muted-foreground/25" strokeWidth={0.75} />
+      {data.map((_, i) => {
+        const [x, y] = at(i, 1)
+        return <line key={i} x1={c} y1={c} x2={x} y2={y} className="stroke-muted-foreground/25" strokeWidth={0.75} />
+      })}
+      <polygon
+        points={share.map((v, i) => at(i, Math.min(1, v / scaleMax)).join(",")).join(" ")}
+        className="fill-data/30 stroke-data"
+        strokeWidth={1.5}
+        strokeLinejoin="round"
+      />
+      {data.map((d, i) => {
+        const [x, y] = at(i, Math.min(1, share[i] / scaleMax))
+        const [lx, ly] = at(i, 1.3)
+        const shown = d.strength && d.strength !== "看不出"
+        return (
+          <g key={d.label}>
+            <circle cx={x} cy={y} r={d.strength && isClear(d.strength) ? 3.2 : shown ? 2.6 : 1.8} className={tone(d)} />
+            <text x={lx} y={ly} textAnchor="middle" dominantBaseline="central" className={cn("text-[9px] font-semibold", tone(d))}>
+              {BUILD_SHORT[d.label] ?? d.label.slice(0, 1)}
+            </text>
+          </g>
+        )
+      })}
+    </svg>
+  )
+}
+
+/** 出裝定位的判定標籤：「1 強勢 AD 輸出」，實心是看得出的、虛線框是還在誤差內 */
+function RoleChips({ items, ownWr }: { items: Judged[]; ownWr: number | null }) {
+  if (!items.length) return <span className="text-[11px] text-muted-foreground">—</span>
+  return (
+    <span className="flex flex-wrap content-start items-start gap-1">
+      {items.map((j, n) => (
+        <span
+          key={j.key}
+          data-testid="crew-role-chip"
+          data-label={j.label}
+          data-strength={j.strength}
+          title={`第 ${n + 1} 名・${tipOf(j, ownWr)}`}
+          className={cn("rounded border px-1.5 py-0.5 text-[11px]", STRENGTH_CLASS[j.strength])}
+        >
+          <span className="mr-1 font-mono font-bold">{n + 1}</span>
+          <span className="opacity-80">{j.strength}</span> {j.label}
+          {wrFlag(j) && <span className={wrFlag(j) === "up" ? "ml-0.5 text-win" : "ml-0.5 text-loss"}>{wrFlag(j) === "up" ? "▲" : "▼"}</span>}
+        </span>
+      ))}
     </span>
   )
 }
 
-function ScoreCell({ j, ownWr, share, onClick }: { j: Judged; ownWr: number | null; share?: number; onClick?: () => void }) {
-  if (!j.games) return <span className="flex h-14 items-center justify-center text-[11px] text-muted-foreground/60">—</span>
-  const f = wrFlag(j)
-  const judged = j.g?.interval != null
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={!onClick}
-      title={tipOf(j, ownWr)}
-      data-testid="crew-cell"
-      data-label={j.label}
-      data-strength={j.strength}
-      data-games={j.games}
-      className={cn(
-        "relative flex h-14 w-full flex-col items-center justify-center rounded-md border transition enabled:hover:ring-1 enabled:hover:ring-primary/60",
-        CELL_CLASS[j.strength],
-      )}
-    >
-      <span className={cn("font-mono text-sm font-semibold tabular-nums", judged ? NUM_CLASS[j.strength] : "text-muted-foreground")}>
-        {j.score === null ? "—" : Math.round(j.score)}
-      </span>
-      <span className="font-mono text-[10px] tabular-nums text-muted-foreground">{j.games} 場</span>
-      {f && <span className={cn("absolute right-1 top-0.5 text-[9px]", f === "up" ? "text-win" : "text-loss")}>{f === "up" ? "▲" : "▼"}</span>}
-      {share !== undefined && <ShareBar share={share} />}
-    </button>
-  )
-}
-
-function MatrixLegend() {
-  const box = (s: Strength, text: string) => (
+function RowLegend() {
+  const chip = (s: Strength, text: string) => (
     <span className="flex items-center gap-1.5">
-      <span className={cn("size-3 rounded-sm border", CELL_CLASS[s])} />
+      <span className={cn("rounded border px-1 text-[10px]", STRENGTH_CLASS[s])}>{s}</span>
       {text}
     </span>
   )
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
-      {box("強勢", "強勢：比同類型強（看得出）")}
-      {box("偏強", "偏強：高 6 分以上，還在誤差內")}
-      {box("看不出", "看不出")}
-      {box("偏弱", "偏弱")}
-      {box("不強勢", "不強勢：比同類型弱（看得出）")}
+      {chip("強勢", "比同類型強（看得出）")}
+      {chip("偏強", "高 6 分以上，還在誤差內")}
+      {chip("偏弱", "低 6 分以上，還在誤差內")}
+      {chip("不強勢", "比同類型弱（看得出）")}
       <span>
         <span className="text-win">▲</span>
         <span className="text-loss">▼</span> 勝率比他自己的平均明顯高／低
-      </span>
-      <span className="flex items-center gap-1.5">
-        <span className="h-[2px] w-5 rounded-full bg-data/80" />
-        佔他場次的比例
       </span>
     </div>
   )
@@ -344,7 +376,7 @@ function sideOf(champs: Judged[], side: "pos" | "neg") {
     )
 }
 
-function ChampSide({ items, ownWr, onMore }: { items: Judged[]; ownWr: number | null; onMore: () => void }) {
+function ChampSide({ items, ownWr, onMore }: { items: Judged[]; ownWr: number | null; onMore?: () => void }) {
   if (!items.length) return <span className="text-[11px] text-muted-foreground">—</span>
   const rest = items.length - CHAMPS_SHOWN
   return (
@@ -352,11 +384,16 @@ function ChampSide({ items, ownWr, onMore }: { items: Judged[]; ownWr: number | 
       {items.slice(0, CHAMPS_SHOWN).map((j, i) => (
         <ChampBadge key={j.key} j={j} rank={i + 1} ownWr={ownWr} />
       ))}
-      {rest > 0 && (
-        <button type="button" onClick={onMore} className="text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">
-          還有 {rest} 隻
-        </button>
-      )}
+      {rest > 0 &&
+        (onMore ? (
+          <button type="button" onClick={onMore} className="text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">
+            還有 {rest} 隻
+          </button>
+        ) : (
+          <span className="text-[11px] text-muted-foreground" title="點這一列看完整排名">
+            還有 {rest} 隻
+          </span>
+        ))}
     </span>
   )
 }
@@ -1093,7 +1130,6 @@ export function Crew() {
   const [excluded, setExcluded] = useState<Set<string>>(new Set())
   const chosen = crew.filter((p) => !excluded.has(p.puuid))
   const puuids = chosen.map((p) => p.puuid)
-  const [view, setView] = useState<"roles" | "champs">("roles")
   const [focus, setFocus] = useState<{ puuid: string; role: string | null; tab: DrawerTab } | null>(null)
 
   const byId = useMemo(() => new Map(crew.map((p) => [p.puuid, p])), [crew])
@@ -1221,177 +1257,123 @@ export function Crew() {
         </div>
       </Panel>
 
-      {/* ── 全員一覽：出裝定位矩陣／英雄，兩個分頁 ── */}
+      {/* ── 全員一覽：每人一列，迷你雷達 + 出裝與英雄的判定 ── */}
       <Panel
         title="全員一覽"
-        caption={
-          view === "roles"
-            ? "每格是他用這種出裝時的隊內貢獻（50＝同類型的中位數，不受輸贏影響），顏色看誤差範圍：整段高於 50 是強勢、整段低於 50 是不強勢。同一欄上下比，就是誰用這種出裝比較強。點名字看完整分析，點格子看他用這種出裝玩過的英雄"
-            : "每個人比同類型強（左）與弱（右）的英雄，實線框是看得出的、虛線框是還在誤差內；頭像下的數字是隊內貢獻。點名字或「還有 N 隻」看完整排名"
-        }
-        action={
-          <ToggleGroup type="single" size="sm" variant="outline" value={view} onValueChange={(v) => v && setView(v as "roles" | "champs")}>
-            <ToggleGroupItem value="roles">出裝定位</ToggleGroupItem>
-            <ToggleGroupItem value="champs">英雄</ToggleGroupItem>
-          </ToggleGroup>
-        }
+        caption="判定看隊內貢獻（50＝同類型的中位數，不受輸贏影響）的誤差範圍：整段高於 50 是強勢、整段低於 50 是不強勢，還在誤差內的寫偏強／偏弱（虛線框）。雷達是各出裝佔他場次的比例。前面的數字是名次，看得出的排前面；滑過看數字，點一列看完整分析"
       >
         {loading ? (
-          <Skeleton className="h-[560px] w-full" />
-        ) : view === "roles" ? (
+          <Skeleton className="h-[640px] w-full" />
+        ) : (
           <div className="space-y-3">
             <p className="text-sm" data-testid="crew-matrix-summary">
-              {counts.judged} 格有 {MIN_N} 場以上，看得出強弱的有 {counts.strong + counts.weak} 格（強勢 {counts.strong}、不強勢 {counts.weak}），其餘差距都還在誤差內。
+              各出裝裡 {counts.judged} 格有 {MIN_N} 場以上，看得出強弱的有 {counts.strong + counts.weak} 格（強勢 {counts.strong}、不強勢 {counts.weak}），其餘差距都還在誤差內。
             </p>
-            <MatrixLegend />
+            <RowLegend />
             <div className="overflow-x-auto">
-              <div className="min-w-[760px] space-y-1">
-                <div className={cn("grid items-end gap-1.5 px-1 text-[11px] text-muted-foreground", MATRIX_COLS)}>
+              <div className="min-w-[1040px]">
+                <div className={cn("grid items-end gap-4 border-b px-2 pb-1.5 text-[11px] text-muted-foreground", ROW_COLS)}>
                   <span>玩家</span>
-                  <span className="text-center">整體</span>
-                  {BUILD_ROLES.map((r) => (
-                    <span key={r} className="text-center leading-tight">
-                      {r}
-                    </span>
-                  ))}
+                  <span className="text-center">出裝定位</span>
+                  <span className="grid grid-cols-2 gap-3">
+                    <span className="text-win">出裝：比同類型強</span>
+                    <span className="text-loss">出裝：比同類型弱</span>
+                  </span>
+                  <span className="grid grid-cols-2 gap-3">
+                    <span className="text-win">英雄：比同類型強</span>
+                    <span className="text-loss">英雄：比同類型弱</span>
+                  </span>
                 </div>
                 <div
                   data-testid="crew-reference-row"
-                  className={cn("grid items-center gap-1.5 rounded-md border border-dashed bg-muted/10 px-1 py-1", MATRIX_COLS)}
+                  className={cn("grid w-full items-center gap-4 border-b border-dashed bg-muted/20 px-2 py-1", ROW_COLS)}
                 >
-                  <span className="min-w-0 pl-1">
+                  <span className="min-w-0">
                     <span className="flex items-baseline gap-1.5 text-sm font-medium">
                       全體參賽者
                       <span className="rounded border border-dashed px-1 text-[10px] font-normal text-muted-foreground">參照</span>
                     </span>
-                    <span className="block font-mono text-[11px] tabular-nums text-muted-foreground">
-                      {everyoneTotal} 場・勝率必然 50%
+                    <span className="mt-0.5 block font-mono text-[11px] tabular-nums text-muted-foreground">
+                      {everyoneTotal} 場・{opt(everyone.rows[0], "participants.winrate")?.toFixed(1) ?? "—"}%・KDA{" "}
+                      {opt(everyone.rows[0], "participants.kda")?.toFixed(2) ?? "—"}
                     </span>
                   </span>
-                  <span className="flex h-14 flex-col items-center justify-center text-center font-mono text-[11px] text-muted-foreground">
-                    <span className="text-sm font-semibold text-foreground">50</span>
-                    中位數
+                  <MiniHex
+                    data={BUILD_ROLES.map((label) => ({
+                      label,
+                      games: n0(everyoneRoles.rows.find((x) => x["builds.build_role"] === label), "participants.games"),
+                      strength: null,
+                    }))}
+                    total={everyoneTotal}
+                  />
+                  <span className="col-span-2 text-[11px] text-muted-foreground">
+                    把資料庫裡每場十位參賽者都算進來：雷達是一般玩家各出裝佔多少，拿來和下面每個人的形狀對照他偏好什麼；
+                    隊內貢獻依定義是 50（同類型的中位數），勝率每場兩隊都算，必然是 50%。
                   </span>
-                  {BUILD_ROLES.map((label) => {
-                    const g = n0(everyoneRoles.rows.find((x) => x["builds.build_role"] === label), "participants.games")
-                    return (
-                      <span
-                        key={label}
-                        title={`所有參賽者裡 ${everyoneTotal ? ((100 * g) / everyoneTotal).toFixed(1) : "—"}% 的場次是${label}`}
-                        className="relative flex h-14 flex-col items-center justify-center font-mono text-[11px] tabular-nums text-muted-foreground"
-                      >
-                        {everyoneTotal ? `${Math.round((100 * g) / everyoneTotal)}%` : "—"}
-                        <ShareBar share={everyoneTotal ? g / everyoneTotal : 0} />
-                      </span>
-                    )
-                  })}
                 </div>
                 {ordered.map((p, i) => {
                   const prof = profiles.get(p.puuid)
                   if (!prof) return null
                   const ownWr = prof.overall.winrate
-                  const total = prof.overall.games
+                  const ov = prof.overall
                   return (
-                    <div
+                    <button
                       key={p.puuid}
+                      type="button"
                       data-testid="crew-row"
+                      onClick={() => open(p.puuid, null, "overview")}
                       style={{ "--stagger": `${i * 35}ms` } as CSSProperties}
                       className={cn(
-                        "slide-in grid items-center gap-1.5 rounded-md px-1 py-0.5",
-                        MATRIX_COLS,
+                        "slide-in grid w-full items-center gap-4 rounded-md border-b px-2 py-1 text-left transition hover:bg-accent",
+                        ROW_COLS,
                         focus?.puuid === p.puuid && "bg-primary/10",
                       )}
                     >
-                      <button
-                        type="button"
-                        onClick={() => open(p.puuid, null, "overview")}
-                        className="min-w-0 rounded px-1 py-0.5 text-left transition hover:bg-accent"
-                        title="看完整分析"
-                      >
+                      <span className="min-w-0">
                         <PlayerName player={p} className="text-sm" />
-                        <span className="block font-mono text-[11px] tabular-nums text-muted-foreground">
-                          {total} 場・{ownWr?.toFixed(1) ?? "—"}%・KDA {opt(sumOf(p.puuid), "participants.kda")?.toFixed(2) ?? "—"}
+                        <span className="mt-0.5 block font-mono text-[11px] tabular-nums text-muted-foreground">
+                          {ov.games} 場・{ownWr?.toFixed(1) ?? "—"}%・KDA {opt(sumOf(p.puuid), "participants.kda")?.toFixed(2) ?? "—"}
                         </span>
-                      </button>
-                      <ScoreCell j={prof.overall} ownWr={null} onClick={() => open(p.puuid, null, "overview")} />
-                      {prof.roles.map((j) => (
-                        <ScoreCell
-                          key={j.key}
-                          j={j}
-                          ownWr={ownWr}
-                          share={total ? j.games / total : 0}
-                          onClick={() => open(p.puuid, j.label, "champs")}
-                        />
-                      ))}
-                    </div>
+                        <span className="block text-[11px] text-muted-foreground" title={tipOf(ov, null)} data-testid="crew-overall" data-strength={ov.strength}>
+                          隊內貢獻{" "}
+                          <span className={cn("font-mono font-semibold", ov.g?.interval ? NUM_CLASS[ov.strength] : "text-muted-foreground")}>
+                            {ov.score === null ? "—" : Math.round(ov.score)}
+                          </span>
+                          {ov.strength !== "看不出" && (
+                            <span className={cn("ml-1 rounded border px-1 text-[10px]", STRENGTH_CLASS[ov.strength])}>{ov.strength}</span>
+                          )}
+                        </span>
+                      </span>
+                      <MiniHex data={prof.roles.map((j) => ({ label: j.label, games: j.games, strength: j.strength }))} total={ov.games} />
+                      <span className="grid grid-cols-2 items-center gap-3">
+                        <RoleChips items={sideOf(prof.roles, "pos")} ownWr={ownWr} />
+                        <RoleChips items={sideOf(prof.roles, "neg")} ownWr={ownWr} />
+                      </span>
+                      <span className="grid grid-cols-2 items-center gap-3">
+                        <ChampSide items={sideOf(prof.champs, "pos")} ownWr={ownWr} />
+                        <ChampSide items={sideOf(prof.champs, "neg")} ownWr={ownWr} />
+                      </span>
+                    </button>
                   )
                 })}
               </div>
             </div>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <div className="min-w-[720px] space-y-1">
-              <div className="grid grid-cols-[minmax(9rem,13rem)_minmax(0,1fr)_minmax(0,1fr)_6.5rem] gap-3 border-b px-1 pb-1.5 text-[11px] text-muted-foreground">
-                <span>玩家</span>
-                <span className="text-win">比同類型強</span>
-                <span className="text-loss">比同類型弱</span>
-                <span className="text-right">{MIN_N} 場以上的英雄</span>
-              </div>
-              {ordered.map((p, i) => {
-                const prof = profiles.get(p.puuid)
-                if (!prof) return null
-                const ownWr = prof.overall.winrate
-                const strong = sideOf(prof.champs, "pos")
-                const weak = sideOf(prof.champs, "neg")
-                const clearN = prof.champs.filter((j) => isClear(j.strength)).length
-                return (
-                  <div
-                    key={p.puuid}
-                    data-testid="crew-champ-row"
-                    style={{ "--stagger": `${i * 35}ms` } as CSSProperties}
-                    className="slide-in grid grid-cols-[minmax(9rem,13rem)_minmax(0,1fr)_minmax(0,1fr)_6.5rem] items-center gap-3 border-b px-1 py-2.5"
-                  >
-                    <button
-                      type="button"
-                      onClick={() => open(p.puuid, null, "champs")}
-                      className="min-w-0 rounded px-1 py-0.5 text-left transition hover:bg-accent"
-                      title="看完整排名"
-                    >
-                      <PlayerName player={p} className="text-sm" />
-                      <span className="block font-mono text-[11px] tabular-nums text-muted-foreground">
-                        {prof.overall.games} 場・隊內貢獻 {prof.overall.score === null ? "—" : Math.round(prof.overall.score)}
-                      </span>
-                    </button>
-                    <ChampSide items={strong} ownWr={ownWr} onMore={() => open(p.puuid, null, "champs")} />
-                    <ChampSide items={weak} ownWr={ownWr} onMore={() => open(p.puuid, null, "champs")} />
-                    <span className="text-right font-mono text-[11px] tabular-nums text-muted-foreground">
-                      {prof.champK} 隻・看得出 {clearN}
-                    </span>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        )}
-        {!loading && (
-          <div className="mt-3">
             <HowWeJudge>
               <p>
                 隊內貢獻是同類型（出裝定位 × 英雄官方主定位）裡的名次百分位：輸出、承傷、存活、參團、控場（有治療或護盾隊友時再加治療護盾）依出裝定位加權。
                 不用擊殺、金錢、勝負計算，所以不受輸贏影響；50 是同類型的中位數。
               </p>
               <p>
-                每一格都算誤差範圍（95%；單場的分數起伏大，標準差約 27，場次越多範圍越窄）。範圍整段高於 50 才寫「強勢」、整段低於 50 才寫「不強勢」；
+                每一項都算誤差範圍（95%；單場的分數起伏大，標準差約 27，場次越多範圍越窄）。範圍整段高於 50 才寫「強勢」、整段低於 50 才寫「不強勢」；
                 差 {CONTRIB_GAP} 分以上但範圍還跨過 50 寫「偏強／偏弱」；不到 {MIN_N} 場不下判斷。同一個人同時比好幾種出裝或好幾隻英雄，範圍會再放寬——
                 一次比二十隻，總有一兩隻看起來特別好或特別差只是運氣。
               </p>
               <p>
                 勝率只當補充：和他自己的整體勝率比，範圍也整段在一邊才標 ▲▼；貢獻強勢但勝率明顯低是「非戰之罪」，貢獻不強勢但勝率明顯高是「靠隊友」。
-                好友多半一起打、勝率互相牽動，每個人的整體勝率目前都和 50% 分不出差別，所以不拿勝率上色。
+                好友多半一起打、勝率互相牽動，每個人的整體勝率目前都和 50% 分不出差別，所以不拿勝率判斷。
               </p>
               <p>
-                舊版的「適合／不適合」用固定門檻、不管場次，幾乎每一格都會被貼上標籤，而且跟著這個人的整體水準走（整體強的人每個出裝都「適合」）。
+                舊版的「適合／不適合」用固定門檻、不管場次，幾乎每一項都會被貼上標籤，而且跟著這個人的整體水準走（整體強的人每個出裝都「適合」）。
                 同一個人不同出裝、不同英雄之間的差距，目前的資料都還分不出來；看得出的，主要是人和人之間的差別。
               </p>
             </HowWeJudge>
