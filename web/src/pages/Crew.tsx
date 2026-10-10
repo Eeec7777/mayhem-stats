@@ -410,7 +410,20 @@ function ChampSide({ items, ownWr, onMore }: { items: Judged[]; ownWr: number | 
 }
 
 /** 抽屜裡的橫向長條：比同類型強（或弱）的英雄全部列出，一行排開，太多時左右捲動 */
-function ChampStrip({ title, tone, items, ownWr }: { title: string; tone: "pos" | "neg"; items: Judged[]; ownWr: number | null }) {
+function ChampStrip({
+  title,
+  tone,
+  items,
+  ownWr,
+  onPick,
+}: {
+  title: string
+  tone: "pos" | "neg"
+  items: Judged[]
+  ownWr: number | null
+  /** 點一隻：捲到下面清單的那一列並展開他玩這隻的每一場 */
+  onPick: (label: string) => void
+}) {
   const clear = items.filter((j) => isClear(j.strength)).length
   return (
     <div className="rounded-lg border px-3 py-2" data-testid={tone === "pos" ? "strip-strong" : "strip-weak"}>
@@ -423,10 +436,16 @@ function ChampStrip({ title, tone, items, ownWr }: { title: string; tone: "pos" 
       {items.length ? (
         <div className="flex gap-2.5 overflow-x-auto px-1 pb-2.5 pt-1.5">
           {items.map((j, i) => (
-            <span key={j.key} className="flex shrink-0 flex-col items-center gap-1.5">
+            <button
+              key={j.key}
+              type="button"
+              onClick={() => onPick(j.label)}
+              aria-label={`看${j.label}的每一場`}
+              className="flex shrink-0 flex-col items-center gap-1.5 rounded-md px-0.5 transition hover:bg-accent/60"
+            >
               <ChampBadge j={j} rank={i + 1} ownWr={ownWr} />
               <span className="mt-1 max-w-[3.5rem] truncate text-[10px] text-muted-foreground">{j.label}</span>
-            </span>
+            </button>
           ))}
         </div>
       ) : (
@@ -469,6 +488,7 @@ function ExpandRow({
   style,
   children,
   label,
+  rowKey,
 }: {
   open: boolean
   onToggle: () => void
@@ -476,10 +496,13 @@ function ExpandRow({
   style?: CSSProperties
   children: React.ReactNode
   label: string
+  /** 讓外面找得到這一列（捲過去用） */
+  rowKey?: string
 }) {
   return (
     <button
       type="button"
+      data-row-key={rowKey}
       onClick={onToggle}
       aria-expanded={open}
       title={open ? `收起${label}的每一場` : `展開${label}的每一場`}
@@ -708,6 +731,15 @@ function PlayerDrawerBody({
     )
   }, [champJudged, sortBy, onlyClear])
 
+  // 橫向長條點一隻英雄：清單裡展開那一列（被「只看看得出的」藏起來就先放回全部），再捲過去
+  const jumpToChamp = (label: string) => {
+    setOnlyClear(false)
+    setListMinH(undefined)
+    setOpenChamp(label)
+    setTimeout(() => {
+      document.querySelector(`[data-row-key="${CSS.escape(label)}"]`)?.scrollIntoView({ block: "start", behavior: "smooth" })
+    }, 60)
+  }
   const pickRole = (r: string | null) => {
     onRole(r)
     onTab("picks")
@@ -837,8 +869,8 @@ function PlayerDrawerBody({
         </div>
         {!(role && (!settled || champs.loading)) && (
           <div className="grid gap-2">
-            <ChampStrip title="比同類型強的英雄" tone="pos" items={sideOf(champJudged.items, "pos")} ownWr={ownWr} />
-            <ChampStrip title="比同類型弱的英雄" tone="neg" items={sideOf(champJudged.items, "neg")} ownWr={ownWr} />
+            <ChampStrip title="比同類型強的英雄" tone="pos" items={sideOf(champJudged.items, "pos")} ownWr={ownWr} onPick={jumpToChamp} />
+            <ChampStrip title="比同類型弱的英雄" tone="neg" items={sideOf(champJudged.items, "neg")} ownWr={ownWr} onPick={jumpToChamp} />
           </div>
         )}
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -892,6 +924,7 @@ function PlayerDrawerBody({
                     open={open}
                     onToggle={() => setOpenChamp(open ? null : j.label)}
                     label={j.label}
+                    rowKey={j.label}
                     style={{ "--stagger": `${Math.min(i * 30, 400)}ms` } as CSSProperties}
                     className={cn(!reordered && "slide-in", "grid items-center gap-3 rounded-md px-2 py-1.5", champCols)}
                   >
