@@ -15,6 +15,7 @@ def live_payload():
                 "physicalLethality": 18.0, "armorPenetrationPercent": 0.65,
                 "magicPenetrationFlat": 0.0, "magicPenetrationPercent": 1.0,
                 "abilityHaste": 20.0, "maxHealth": 2000.0, "armor": 80.0, "magicResist": 50.0,
+                "resourceType": "MANA", "resourceMax": 900.0, "attackRange": 525.0,
             },
         },
         "allPlayers": [
@@ -40,6 +41,15 @@ class ParseLiveGameTests(unittest.TestCase):
         self.assertEqual(st["magicPenPct"], 0.0)
         self.assertEqual(st["lethality"], 18.0)
         self.assertEqual(game["level"], 11)
+        self.assertEqual(st["mana"], 900.0)
+        self.assertTrue(st["ranged"])
+
+    def test_non_mana_resource_counts_as_no_mana(self):
+        payload = live_payload()
+        payload["activePlayer"]["championStats"].update(resourceType="ENERGY", resourceMax=200.0, attackRange=125.0)
+        st = lcu.parse_live_game(payload)["stats"]
+        self.assertEqual(st["mana"], 0.0)
+        self.assertFalse(st["ranged"])
 
     def test_players_carry_team_side_and_items_but_no_names(self):
         game = lcu.parse_live_game(live_payload())

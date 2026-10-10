@@ -287,6 +287,12 @@ def parse_live_game(data):
         stats["critChance"] = round(stats["critChance"] * 100, 2)
     if "critDamage" in stats and stats["critDamage"] > 10:
         stats["critDamage"] = round(stats["critDamage"] / 100, 4)  # 有的版本給 175 而不是 1.75
+    # 魔力只在資源是魔力時帶（能量、怒氣之類的英雄帶 0，終極魔劍、熾天使才不會被算成有魔力）
+    if isinstance(raw.get("resourceMax"), (int, float)):
+        stats["mana"] = float(raw["resourceMax"]) if str(raw.get("resourceType", "")).upper() == "MANA" else 0.0
+    # 遠程／近戰：近戰攻擊距離 125～250，遠程 ≥ 325
+    if isinstance(raw.get("attackRange"), (int, float)):
+        stats["ranged"] = raw["attackRange"] >= 300
 
     def player(p):
         return {

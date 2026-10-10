@@ -61,7 +61,7 @@ type State = {
 const DEFAULT_STATE: State = {
   me: {
     level: 11, ad: 160, ap: 0, attackSpeed: 1.1, critChance: 25, critDamage: 1.75, lethality: 0, armorPenPct: 0,
-    magicPen: 0, magicPenPct: 0, haste: 10, hp: 1900, armor: 70, mr: 45,
+    magicPen: 0, magicPenPct: 0, haste: 10, hp: 1900, armor: 70, mr: 45, mana: 600, ranged: false,
   },
   target: { level: 11, hp: 2300, armor: 85, mr: 55 },
   profile: PRESETS[0].profile,
@@ -126,7 +126,7 @@ export function Calculator() {
 
   const byId = useMemo(() => new Map((catalog?.items ?? []).map((i) => [i.id, i])), [catalog])
   const set = <K extends keyof State>(key: K, value: State[K]) => setState((s) => ({ ...s, [key]: value }))
-  const patch = <K extends "me" | "target" | "profile" | "threat" | "manual">(key: K, field: keyof State[K], v: number) =>
+  const patch = <K extends "me" | "target" | "profile" | "threat" | "manual">(key: K, field: keyof State[K], v: number | boolean) =>
     setState((s) => ({ ...s, [key]: { ...s[key], [field]: v }, ...(key === "profile" ? { preset: "custom" } : {}) }))
 
   const effects = useMemo(() => buildEffects(state.owned, state.augments, state.manual), [state.owned, state.augments, state.manual])
@@ -245,7 +245,22 @@ export function Calculator() {
             <NumField label="生命" value={state.me.hp} onChange={(v) => patch("me", "hp", v)} step={50} />
             <NumField label="物防" value={state.me.armor} onChange={(v) => patch("me", "armor", v)} />
             <NumField label="魔防" value={state.me.mr} onChange={(v) => patch("me", "mr", v)} />
+            <NumField label="魔力" value={state.me.mana} onChange={(v) => patch("me", "mana", v)} step={50} />
           </FieldGrid>
+          <div className="mt-3 flex items-center gap-2 text-xs">
+            <span className="w-[4.5rem] shrink-0 text-muted-foreground">攻擊距離</span>
+            <ToggleGroup
+              type="single"
+              size="sm"
+              variant="outline"
+              value={state.me.ranged ? "ranged" : "melee"}
+              onValueChange={(v) => v && setState((s) => ({ ...s, me: { ...s.me, ranged: v === "ranged" } }))}
+            >
+              <ToggleGroupItem value="melee">近戰</ToggleGroupItem>
+              <ToggleGroupItem value="ranged">遠程</ToggleGroupItem>
+            </ToggleGroup>
+            <span className="text-[11px] text-muted-foreground">很多被動對遠程打折</span>
+          </div>
         </Panel>
 
         <Panel title="對手" caption="你要打的那個人；從遊戲帶入時是依他的等級與裝備估的，可以再改" index={1}>

@@ -80,7 +80,8 @@ test.describe("出裝計算機", () => {
            ('AttackDamage','AttackSpeed','CritChance','CritDamage','Lethality','ArmorPenetration','AbilityHaste','Health','Armor','MagicResist')`,
       ).map((r) => Number(r.item_id)),
     )
-    for (const id of [6653, 4633, 3036, 6676, 3071, 3302, 3124, 3084, 3161]) useful.add(id)
+    // 被動會造成傷害、但數值欄沒有物理或坦度屬性的（雷霆風暴只有魔攻與跑速，引爆傷害照樣算）
+    for (const id of [6653, 4633, 3036, 6676, 3071, 3302, 3124, 3084, 3161, 4646]) useful.add(id)
     const full = expected.filter((r) => (Number(r.price) >= 2200 || (Number(r.boots) && Number(r.price) > 300)) && useful.has(Number(r.id)))
     await expect(page.getByText(/^\d+ 列$/).first()).toHaveText(`${full.length} 列`)
   })
@@ -116,6 +117,34 @@ test.describe("出裝計算機", () => {
     await page.getByRole("option", { name: /死亡之帽/ }).click()
     // 面板 300 已含死亡之帽；再加 20 魔攻會變成 26
     await expect(steps.locator("li", { hasText: "+20 魔攻" })).toContainText(`+${perK(326).toFixed(1)}%`)
+  })
+
+  test("耀光類被動：三相之力 = 數值 + 技能後普攻 200% 基礎物攻，和手算一致", async ({ page }) => {
+    // 預設：11 級近戰、普攻射手（6 秒、90% 普攻、冷卻 8、一輪 200 + 1.0 物攻）、對手 85 物防
+    const g = 10 * (0.7025 + 0.0175 * 10)
+    const baseAd = 60 + 3.4 * g
+    const fight = (ad: number, as: number, haste: number, spellblade: boolean) => {
+      const autos = as * 6 * 0.9
+      const casts = 1 + (6 * (1 + haste / 100)) / 8
+      const procs = spellblade ? Math.min(casts, autos, 1 + 6 / 1.5) : 0
+      const raw = autos * ad * (1 + 0.25 * 0.75) + casts * (200 + ad) + procs * 2 * baseAd
+      return (raw * 100) / 185
+    }
+    // 三相之力：36 物攻、30% 攻速（× 成長 0.65）、15 技能加速
+    const gain = (fight(196, 1.1 + 0.65 * 0.3, 25, true) / fight(160, 1.1, 10, false) - 1) * 100
+    await page.getByPlaceholder("快速搜尋所有欄位…").fill("三相之力")
+    await expect(page.locator(".ag-row", { hasText: "三相之力" }).first()).toContainText(`整件 +${gain.toFixed(1)}%`)
+  })
+
+  test("命脈護盾算進有效生命：不朽盾弓 11 級近戰 400 + 30 × 3", async ({ page }) => {
+    const taken = 0.5 * (100 / 170) + 0.45 * (100 / 145) + 0.05
+    const gain = (((1900 + 490) / taken) / (1900 / taken) - 1) * 100
+    await page.getByPlaceholder("快速搜尋所有欄位…").fill("不朽盾弓")
+    await expect(page.locator(".ag-row", { hasText: "不朽盾弓" }).first()).toContainText(`整件 +${gain.toFixed(1)}%`)
+    // 切成遠程：護盾 ×0.8
+    await panel(page, "我的面板").getByRole("radio", { name: "遠程" }).click()
+    const rangedGain = (((1900 + 490 * 0.8) / taken) / (1900 / taken) - 1) * 100
+    await expect(page.locator(".ag-row", { hasText: "不朽盾弓" }).first()).toContainText(`整件 +${rangedGain.toFixed(1)}%`)
   })
 
   test("從對局帶入：面板、身上的裝備、敵人清單與估出來的對手雙防", async ({ page }) => {
