@@ -245,7 +245,7 @@ test.describe("好友比較頁：全員一覽", () => {
   })
 })
 
-test.describe("好友比較頁：抽屜（四個分頁）", () => {
+test.describe("好友比較頁：抽屜（兩個分頁）", () => {
   test.beforeEach(async ({ page }) => {
     await openPage(page, "crew")
     await expect(matrixRows(page).first()).toBeVisible()
@@ -259,7 +259,7 @@ test.describe("好友比較頁：抽屜（四個分頁）", () => {
     const drawer = page.getByRole("dialog")
     await expect(drawer.getByRole("heading")).toContainText(nameOf(m.riot_id))
     await expect(drawer.getByText(`整體 ${((Number(r.wins) / Number(r.games)) * 100).toFixed(1)}%・${r.games} 場・KDA`)).toBeVisible()
-    for (const t of ["總覽", "出裝定位", "英雄", "貢獻分解"]) await expect(drawer.getByRole("tab", { name: t })).toBeVisible()
+    await expect(drawer.getByRole("tab")).toHaveText(["總覽", "出裝與英雄"])
     await expect(drawer.getByRole("tab", { name: "總覽" })).toHaveAttribute("data-state", "active")
     await expect(drawer.getByTestId("crew-reading")).toBeVisible()
     await expect(crumbs(page)).toContainText(nameOf(m.riot_id))
@@ -267,7 +267,7 @@ test.describe("好友比較頁：抽屜（四個分頁）", () => {
     await expect(drawer).toBeHidden()
   })
 
-  test("總覽：隊內貢獻與勝率兩張卡（含 95% 區間）、出裝雷達、看得出的強項／弱項", async ({ page }) => {
+  test("總覽：隊內貢獻與勝率兩張卡（含 95% 區間）、出裝雷達、看得出的強項／弱項、貢獻分解", async ({ page }) => {
     await nameButton(matrixRows(page).first()).click()
     const drawer = page.getByRole("dialog")
     await expect(drawer.getByText("隊內貢獻", { exact: true })).toBeVisible()
@@ -276,16 +276,16 @@ test.describe("好友比較頁：抽屜（四個分頁）", () => {
     await expect(drawer.getByText("看得出的強項")).toBeVisible()
     await expect(drawer.getByText("看得出的弱項")).toBeVisible()
     await ready(page)
-    await expect(charts(drawer)).toHaveCount(1)
+    await expect(charts(drawer)).toHaveCount(2)
   })
 
-  test("出裝定位分頁：八種出裝一列一個，判定和一覽表同一列的標籤一致", async ({ page }) => {
+  test("出裝與英雄分頁：八種出裝一列一個，判定和一覽表同一列的標籤一致", async ({ page }) => {
     const row = matrixRows(page).first()
     const chips = new Map<string, string>()
     for (const c of await row.getByTestId("crew-role-chip").all()) chips.set((await c.getAttribute("data-label"))!, (await c.getAttribute("data-strength"))!)
     await row.click()
     const drawer = page.getByRole("dialog")
-    await drawer.getByRole("tab", { name: "出裝定位" }).click()
+    await drawer.getByRole("tab", { name: "出裝與英雄" }).click()
     const rows = drawer.getByTestId("role-row")
     await expect(rows).toHaveCount(8)
     for (const r of await rows.all()) {
@@ -294,12 +294,12 @@ test.describe("好友比較頁：抽屜（四個分頁）", () => {
     }
   })
 
-  test("英雄分頁：從 1 連續編號；場次加總 = 這個人的總場次；點一列展開那隻英雄的每一場，再點收起", async ({ page }) => {
+  test("出裝與英雄分頁的英雄清單：從 1 連續編號；場次加總 = 這個人的總場次；點一列展開那隻英雄的每一場，再點收起", async ({ page }) => {
     const row = matrixRows(page).first()
     const m = await memberOf(row)
     await nameButton(row).click()
     const drawer = page.getByRole("dialog")
-    await drawer.getByRole("tab", { name: "英雄" }).click()
+    await drawer.getByRole("tab", { name: "出裝與英雄" }).click()
     const ranks = await drawer.getByTestId("pick-rank").allInnerTexts()
     expect(ranks).toEqual(ranks.map((_, i) => String(i + 1)))
     const rows = drawer.locator("button[aria-expanded]")
@@ -314,7 +314,7 @@ test.describe("好友比較頁：抽屜（四個分頁）", () => {
     await expect(first).toHaveAttribute("aria-expanded", "false")
   })
 
-  test("總覽的雷達點一個出裝定位 → 切到「英雄」分頁、只剩那種出裝", async ({ page }) => {
+  test("總覽的雷達點一個出裝定位 → 切到「出裝與英雄」分頁、只剩那種出裝", async ({ page }) => {
     await nameButton(matrixRows(page).first()).click()
     const drawer = page.getByRole("dialog")
     await ready(page)
@@ -325,14 +325,13 @@ test.describe("好友比較頁：抽屜（四個分頁）", () => {
     const role: string = opt.radar[0].indicator[idx].name
     const p = await radarPoint(radar, idx)
     await page.mouse.click(p.x, p.y)
-    await expect(drawer.getByRole("tab", { name: "英雄" })).toHaveAttribute("data-state", "active")
+    await expect(drawer.getByRole("tab", { name: "出裝與英雄" })).toHaveAttribute("data-state", "active")
     await expect(crumbs(page)).toContainText(role)
   })
 
-  test("貢獻分解分頁：雷達 + 六項橫條", async ({ page }) => {
+  test("總覽最下面是貢獻分解：雷達 + 六項橫條", async ({ page }) => {
     await nameButton(matrixRows(page).first()).click()
     const drawer = page.getByRole("dialog")
-    await drawer.getByRole("tab", { name: "貢獻分解" }).click()
     await expect(drawer.getByText(/貢獻分解・所有出裝/)).toBeVisible()
     await ready(page)
     expect(await drawer.locator("[title*='百分位']").count()).toBeGreaterThanOrEqual(5)

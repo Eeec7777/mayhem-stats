@@ -453,7 +453,8 @@ function ExpandRow({
   )
 }
 
-type DrawerTab = "overview" | "roles" | "champs" | "contrib"
+/** 兩個分頁：總覽（整體的數字、雷達、看得出的強弱、貢獻分解）、出裝與英雄（出裝的區間圖，點一種出裝下面只列那種出裝的英雄） */
+type DrawerTab = "overview" | "picks"
 
 /** 總覽分頁上的一張數字卡：主數字、區間、判定與一句說明 */
 function SummaryCard({ title, main, sub, strength, note }: { title: string; main: string; sub: string; strength: Strength; note: string }) {
@@ -528,7 +529,7 @@ function Highlights({ profile, onRole, onChamps }: { profile: Profile; onRole: (
       {block("看得出的強項", "強勢", "text-win")}
       {block("看得出的弱項", "不強勢", "text-loss")}
       <p className="text-[11px] text-muted-foreground">
-        另有 {leanUp} 項偏強、{leanDown} 項偏弱，差距還在誤差內；出裝定位、英雄分頁看得到全部。
+        另有 {leanUp} 項偏強、{leanDown} 項偏弱，差距還在誤差內；「出裝與英雄」分頁看得到全部。
       </p>
     </div>
   )
@@ -544,7 +545,7 @@ function RoleForest({ profile, selected, onPick }: { profile: Profile; selected:
   return (
     <div className="space-y-2">
       <div className="text-[11px] text-muted-foreground">
-        點是他這種出裝的隊內貢獻、線是區間（同時比 {profile.roleK} 種出裝，已放寬）；區間整段在中線同一邊才上色。點一列看他用這種出裝玩過的英雄
+        點是他這種出裝的隊內貢獻、線是區間（同時比 {profile.roleK} 種出裝，已放寬）；區間整段在中線同一邊才上色。點一列，下面只列他用這種出裝玩過的英雄
       </div>
       <div>
         <div className={cn("grid items-end gap-x-2", cols)}>
@@ -600,7 +601,7 @@ function RoleForest({ profile, selected, onPick }: { profile: Profile; selected:
   )
 }
 
-/** 抽屜：某個人的完整分析，分成總覽、出裝定位、英雄、貢獻分解四個分頁 */
+/** 抽屜：某個人的完整分析，分成「總覽」與「出裝與英雄」兩個分頁 */
 function PlayerDrawerBody({
   player,
   profile,
@@ -665,7 +666,7 @@ function PlayerDrawerBody({
 
   const pickRole = (r: string | null) => {
     onRole(r)
-    onTab("champs")
+    onTab("picks")
   }
   const ov = profile.overall
   const wrAll = profile.overallWr
@@ -677,9 +678,7 @@ function PlayerDrawerBody({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <TabsList>
           <TabsTrigger value="overview">總覽</TabsTrigger>
-          <TabsTrigger value="roles">出裝定位</TabsTrigger>
-          <TabsTrigger value="champs">英雄</TabsTrigger>
-          <TabsTrigger value="contrib">貢獻分解</TabsTrigger>
+          <TabsTrigger value="picks">出裝與英雄</TabsTrigger>
         </TabsList>
         <Button
           size="sm"
@@ -739,31 +738,51 @@ function PlayerDrawerBody({
               <div className="h-[260px]" />
             )}
           </div>
-          <Highlights profile={profile} onRole={(r) => pickRole(r)} onChamps={() => onTab("champs")} />
+          <Highlights profile={profile} onRole={(r) => pickRole(r)} onChamps={() => onTab("picks")} />
         </div>
+        {/* 貢獻分解：六項各自和同類型比（選了出裝就只看那種出裝） */}
+      <div className="rounded-lg border p-3">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <div className="text-sm font-semibold">
+            貢獻分解{role ? `・出裝是${role}時` : "・所有出裝"}
+          </div>
+          <div className="text-[12px]">
+            隊內貢獻 <ContribScore dev={dev(contrib.rows[0])} className="text-base font-semibold" />
+          </div>
+        </div>
+        <div className="mb-2 text-[11px] text-muted-foreground">
+          每一項都和「同類型」（出裝定位 × 英雄官方主定位）的人比，換成名次百分位：50＝同類型的中位數，雷達裡的虛線圈與橫條中間的刻度就是 50。
+          依出裝定位加權：坦克重承傷、參團與控場，輸出位重輸出與存活，輔助重參團與控場；有治療或護盾隊友的場次再加「治療護盾」。
+          治療與護盾隊友的量只有開始擷取賽後統計之後的場次才有
+        </div>
+        {!settled || contrib.loading ? (
+          <Skeleton className="h-[300px] w-full" />
+        ) : contrib.error ? (
+          <div className="text-sm text-destructive">{contrib.error}</div>
+        ) : (
+          // 雷達看形狀（哪幾項突出、哪幾項是洞），橫條看每一項的確切數字與說明，兩個都留
+          <div className="grid items-center gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+            <ContribRadarChart
+              data={CONTRIB_PARTS.map((c) => ({ label: c.label, hint: c.hint, value: opt(contrib.rows[0], c.key) }))}
+              height={300}
+            />
+            <ContribBars row={contrib.rows[0]} />
+          </div>
+        )}
+      </div>
       </TabsContent>
 
-      {/* ── 出裝定位：八種出裝的區間 ── */}
-      <TabsContent value="roles" className="reveal">
-        <RoleForest profile={profile} selected={role} onPick={(r) => pickRole(role === r ? null : r)} />
-      </TabsContent>
-
-      {/* ── 英雄：完整排名，可依出裝篩選，點一列看每一場 ── */}
-      <TabsContent value="champs" className="reveal space-y-2">
-        <div className="flex flex-wrap items-center gap-1.5">
-          {[null, ...profile.roles.filter((j) => j.games > 0).map((j) => j.label)].map((r) => (
-            <button
-              key={r ?? "all"}
-              type="button"
-              onClick={() => onRole(r)}
-              className={cn(
-                "rounded-full border px-2.5 py-0.5 text-xs transition",
-                role === r ? "border-primary bg-primary/15 text-foreground" : "text-muted-foreground hover:border-primary/40",
-              )}
-            >
-              {r ?? "全部出裝"}
-            </button>
-          ))}
+      {/* ── 出裝與英雄：上面八種出裝的區間，點一種出裝下面只列那種出裝的英雄；英雄點一列看每一場 ── */}
+      <TabsContent value="picks" className="reveal space-y-5">
+        <RoleForest profile={profile} selected={role} onPick={(r) => onRole(role === r ? null : r)} />
+        <div className="space-y-2">
+        <div className="flex flex-wrap items-baseline justify-between gap-2 border-t pt-3">
+          <div className="text-sm font-semibold">{role ? `出裝是${role}時玩過的英雄` : "玩過的每隻英雄"}</div>
+          {role && (
+            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => onRole(null)}>
+              看全部出裝
+            </Button>
+          )}
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="text-[11px] text-muted-foreground">
@@ -838,40 +857,9 @@ function PlayerDrawerBody({
             })}
           </div>
         )}
-      </TabsContent>
-
-      {/* ── 貢獻分解：六項各自和同類型比 ── */}
-      <TabsContent value="contrib" className="reveal">
-        <div className="rounded-lg border p-3">
-          <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <div className="text-sm font-semibold">
-              貢獻分解{role ? `・出裝是${role}時` : "・所有出裝"}
-            </div>
-            <div className="text-[12px]">
-              隊內貢獻 <ContribScore dev={dev(contrib.rows[0])} className="text-base font-semibold" />
-            </div>
-          </div>
-          <div className="mb-2 text-[11px] text-muted-foreground">
-            每一項都和「同類型」（出裝定位 × 英雄官方主定位）的人比，換成名次百分位：50＝同類型的中位數，雷達裡的虛線圈與橫條中間的刻度就是 50。
-            依出裝定位加權：坦克重承傷、參團與控場，輸出位重輸出與存活，輔助重參團與控場；有治療或護盾隊友的場次再加「治療護盾」。
-            治療與護盾隊友的量只有開始擷取賽後統計之後的場次才有
-          </div>
-          {!settled || contrib.loading ? (
-            <Skeleton className="h-[300px] w-full" />
-          ) : contrib.error ? (
-            <div className="text-sm text-destructive">{contrib.error}</div>
-          ) : (
-            // 雷達看形狀（哪幾項突出、哪幾項是洞），橫條看每一項的確切數字與說明，兩個都留
-            <div className="grid items-center gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-              <ContribRadarChart
-                data={CONTRIB_PARTS.map((c) => ({ label: c.label, hint: c.hint, value: opt(contrib.rows[0], c.key) }))}
-                height={300}
-              />
-              <ContribBars row={contrib.rows[0]} />
-            </div>
-          )}
         </div>
       </TabsContent>
+
     </Tabs>
   )
 }
