@@ -398,6 +398,33 @@ function ChampSide({ items, ownWr, onMore }: { items: Judged[]; ownWr: number | 
   )
 }
 
+/** 抽屜裡的橫向長條：比同類型強（或弱）的英雄全部列出，一行排開，太多時左右捲動 */
+function ChampStrip({ title, tone, items, ownWr }: { title: string; tone: "pos" | "neg"; items: Judged[]; ownWr: number | null }) {
+  const clear = items.filter((j) => isClear(j.strength)).length
+  return (
+    <div className="rounded-lg border px-3 py-2" data-testid={tone === "pos" ? "strip-strong" : "strip-weak"}>
+      <div className="mb-1.5 flex items-baseline gap-2 text-xs">
+        <span className={cn("font-semibold", tone === "pos" ? "text-win" : "text-loss")}>{title}</span>
+        <span className="text-[11px] text-muted-foreground">
+          {items.length} 隻{items.length ? `・看得出 ${clear}（實線框）` : ""}
+        </span>
+      </div>
+      {items.length ? (
+        <div className="flex gap-2.5 overflow-x-auto px-1 pb-2.5 pt-1.5">
+          {items.map((j, i) => (
+            <span key={j.key} className="flex shrink-0 flex-col items-center gap-1.5">
+              <ChampBadge j={j} rank={i + 1} ownWr={ownWr} />
+              <span className="mt-1 max-w-[3.5rem] truncate text-[10px] text-muted-foreground">{j.label}</span>
+            </span>
+          ))}
+        </div>
+      ) : (
+        <div className="pb-1 text-[11px] text-muted-foreground">沒有（{MIN_N} 場以上、差距 6 分以上的才列）</div>
+      )}
+    </div>
+  )
+}
+
 // ── 抽屜 ────────────────────────────────────────────────────────────────────
 
 /** 某個人在某些條件下（某隻英雄、某種出裝）的每一場。
@@ -671,7 +698,12 @@ function PlayerDrawerBody({
   const ov = profile.overall
   const wrAll = profile.overallWr
   const radar = profile.roles.map(({ label, games, wins, winrate }) => ({ label, games, wins, winrate }))
-  const champCols = "grid-cols-[1.5rem_minmax(0,1fr)_3.25rem_minmax(8rem,12rem)_4.5rem_7.5rem]"
+  const champCols = "grid-cols-[1.5rem_minmax(8rem,1fr)_3rem_minmax(8rem,11rem)_minmax(7rem,10rem)_2.25rem_6.5rem]"
+  // 英雄清單裡的貢獻區間共用一把尺：取所有區間最遠的一端，進位到 10，介於 20～50
+  const champReach = Math.min(
+    50,
+    Math.max(20, Math.ceil(Math.max(0, ...champJudged.items.flatMap((j) => (j.g?.interval ? [Math.abs(j.g.interval[0]), Math.abs(j.g.interval[1])] : []))) / 10) * 10),
+  )
 
   return (
     <Tabs value={tab} onValueChange={(v) => onTab(v as DrawerTab)} className="gap-3">
@@ -784,6 +816,12 @@ function PlayerDrawerBody({
             </Button>
           )}
         </div>
+        {!(role && (!settled || champs.loading)) && (
+          <div className="grid gap-2">
+            <ChampStrip title="比同類型強的英雄" tone="pos" items={sideOf(champJudged.items, "pos")} ownWr={ownWr} />
+            <ChampStrip title="比同類型弱的英雄" tone="neg" items={sideOf(champJudged.items, "neg")} ownWr={ownWr} />
+          </div>
+        )}
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="text-[11px] text-muted-foreground">
             依{sortBy === "score" ? "隊內貢獻（往他自己的平均收縮過，一兩場的不會排到最前面）" : "場次"}排；
@@ -813,12 +851,12 @@ function PlayerDrawerBody({
               <span>英雄（點一列看每一場）</span>
               <span>場次</span>
               <span>勝率（刻度＝他自己）</span>
-              <span className="text-right">貢獻</span>
+              <span className="text-center">隊內貢獻（中線＝50）</span>
+              <span />
               <span>判定</span>
             </div>
             {champRows.map((j, i) => {
               const open = openChamp === j.label
-              const half = j.g?.interval ? (j.g.interval[1] - j.g.interval[0]) / 2 : null
               return (
                 <Fragment key={j.key}>
                   <ExpandRow
@@ -838,9 +876,15 @@ function PlayerDrawerBody({
                     </span>
                     <span className="font-mono text-xs tabular-nums text-muted-foreground">{j.games} 場</span>
                     <RecordCell winrate={j.winrate} wins={j.wins} losses={j.games - j.wins} baseline={ownWr} baselineLabel="他自己的整體勝率" />
-                    <span className="text-right font-mono text-[12px] tabular-nums">
-                      <span className={j.g?.interval ? NUM_CLASS[j.strength] : "text-muted-foreground"}>{j.score === null ? "—" : Math.round(j.score)}</span>
-                      {half !== null && <span className="block text-[10px] text-muted-foreground">±{Math.round(half)}</span>}
+                    <ForestTrack
+                      diff={j.g?.interval ? j.g.diff : null}
+                      interval={j.g?.interval ?? null}
+                      clear={!!j.g?.clear}
+                      reach={champReach}
+                      empty={`不到 ${MIN_N} 場`}
+                    />
+                    <span className={cn("text-right font-mono text-[13px] font-semibold tabular-nums", j.g?.interval ? NUM_CLASS[j.strength] : "text-muted-foreground")}>
+                      {j.score === null ? "—" : Math.round(j.score)}
                     </span>
                     <StrengthChip j={j} />
                   </ExpandRow>

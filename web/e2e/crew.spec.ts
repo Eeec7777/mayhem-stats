@@ -314,6 +314,23 @@ test.describe("好友比較頁：抽屜（兩個分頁）", () => {
     await expect(first).toHaveAttribute("aria-expanded", "false")
   })
 
+  test("出裝與英雄分頁：上方兩條橫向長條列出比同類型強／弱的全部英雄，頭像數 = 一覽表那一列的數量（不只前 5 隻）", async ({ page }) => {
+    const row = matrixRows(page).first()
+    const m = await memberOf(row)
+    const champs = sql(
+      `SELECT p.champion_id, COUNT(c.score) scored, AVG(c.score) score FROM match_participants p JOIN matches mm USING (platform_id, game_id)
+         LEFT JOIN mat_contribution c ON c.participant_rowid = p.rowid WHERE p.puuid = ? AND mm.queue_id = 2400 GROUP BY p.champion_id`,
+      [m.puuid],
+    ).filter((r) => r.score !== null)
+    const z = zFor(champs.filter((r) => Number(r.scored) >= 5).length)
+    const st = champs.map((r) => strengthOf(Number(r.score), Number(r.scored), z))
+    await row.click()
+    const drawer = page.getByRole("dialog")
+    await drawer.getByRole("tab", { name: "出裝與英雄" }).click()
+    await expect(drawer.getByTestId("strip-strong").getByTestId("crew-champ")).toHaveCount(st.filter((x) => x === "強勢" || x === "偏強").length)
+    await expect(drawer.getByTestId("strip-weak").getByTestId("crew-champ")).toHaveCount(st.filter((x) => x === "不強勢" || x === "偏弱").length)
+  })
+
   test("總覽的雷達點一個出裝定位 → 切到「出裝與英雄」分頁、只剩那種出裝", async ({ page }) => {
     await nameButton(matrixRows(page).first()).click()
     const drawer = page.getByRole("dialog")
