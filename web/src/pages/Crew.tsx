@@ -39,7 +39,7 @@ import { BUILD_ROLES, BUILD_SHORT, NO_LIMIT, round0, splitRiotId } from "./share
 // 隊內貢獻（contribution.score）是同類型（出裝定位 × 英雄官方主定位）裡的名次百分位，同類型的中位數＝50；
 // 不用擊殺、金錢、勝負當輸入，不受輸贏影響，所以判斷以它為主。
 //   和 50 比，95% 區間（標準誤＝單場標準差 27 ÷ √有分數的場數）整段高於 50 是「強勢」、整段低於 50 是「不強勢」；
-//   差 CONTRIB_GAP（6）分以上但區間還跨過 50 是「偏強／偏弱」；其餘「看不出」；不到 MIN_N 場不下判斷。
+//   差 CONTRIB_GAP（6）分以上但區間還跨過 50 是「偏強／偏弱」；其餘畫面上寫「普通」；不到 MIN_N 場寫「場次不夠」。
 //   同一個人同時比好幾種出裝（或好幾隻英雄）時用 zFor(k) 放寬區間——一次比二十隻，總會有一兩隻只是運氣。
 // 勝率只當補充：和他自己的整體勝率比，區間（同樣放寬）整段在一邊才標 ▲▼，以及「非戰之罪」（貢獻強勢但勝率明顯低）、
 //   「靠隊友」（貢獻不強勢但勝率明顯高）。好友多半一起打、勝率互相牽動，2026-10 實測每個人的整體勝率都和 50% 分不出差別。
@@ -137,13 +137,23 @@ function judgeAll(stats: Stat[], own: Own) {
 const wrFlag = (j: Judged) => (j.wr?.clear ? (j.wr.diff > 0 ? "up" : "down") : null)
 
 /** 勝率的補充說明：只有勝率的區間也整段在一邊才講 */
+/** 勝率和他自己的平均差這麼多（百分點）以上、但還在誤差內時，補一句「勝率偏高／偏低」 */
+const WR_LEAN = 15
+
+/** 勝率的補充說明：區間整段在一邊是「明顯」（以及非戰之罪／靠隊友），差 WR_LEAN 以上但還在誤差內是「偏」 */
 function extraOf(j: Judged) {
   const f = wrFlag(j)
-  if (!f) return null
-  if (j.strength === "強勢" && f === "down") return "非戰之罪"
-  if (j.strength === "不強勢" && f === "up") return "靠隊友"
-  return f === "up" ? "勝率明顯高" : "勝率明顯低"
+  if (f) {
+    if (j.strength === "強勢" && f === "down") return "非戰之罪"
+    if (j.strength === "不強勢" && f === "up") return "靠隊友"
+    return f === "up" ? "勝率明顯高" : "勝率明顯低"
+  }
+  if (j.wr?.interval && Math.abs(j.wr.diff) >= WR_LEAN) return j.wr.diff > 0 ? "勝率偏高" : "勝率偏低"
+  return null
 }
+
+/** 畫面上的字：場次夠、但隊內貢獻和 50 差不多的是「普通」（不是「看不出」——那會被讀成場次不夠） */
+const shownOf = (s: Strength) => (s === "看不出" ? "普通" : s)
 
 const isPos = (s: Strength) => s === "強勢" || s === "偏強"
 const isNeg = (s: Strength) => s === "不強勢" || s === "偏弱"
@@ -155,7 +165,7 @@ function tipOf(j: Judged, ownWr: number | null) {
     lines.push(
       `隊內貢獻 ${Math.round(j.g.mean)}（50＝同類型的中位數）` +
         (j.g.interval
-          ? `，區間 ${Math.round(50 + j.g.interval[0])}～${Math.round(50 + j.g.interval[1])} → ${j.strength}`
+          ? `，區間 ${Math.round(50 + j.g.interval[0])}～${Math.round(50 + j.g.interval[1])} → ${shownOf(j.strength)}`
           : `；不到 ${MIN_N} 場，不下判斷`),
     )
   }
@@ -177,17 +187,17 @@ function tipOf(j: Judged, ownWr: number | null) {
 /** 判定標籤：五級（實心＝看得出、虛線＝還在誤差內），勝率也看得出時在後面補一句 */
 function StrengthChip({ j }: { j: Judged }) {
   const x = extraOf(j)
-  const f = wrFlag(j)
-  // 不到 MIN_N 場沒有區間：和「場次夠、差距在誤差內」的看不出分開講
+  const up = (j.wr?.diff ?? 0) > 0
+  // 不到 MIN_N 場沒有區間：和「場次夠、和 50 差不多」的普通分開講
   if (!j.g?.interval && !x) return <span className="text-[11px] text-muted-foreground/80">場次不夠</span>
   return (
     <span className="inline-flex items-center gap-1 whitespace-nowrap">
       <span data-testid="strength-chip" className={cn("rounded border px-1.5 text-[11px]", STRENGTH_CLASS[j.strength])}>
-        {j.strength}
+        {j.g?.interval ? shownOf(j.strength) : "場次不夠"}
       </span>
       {x && (
-        <span className="text-[11px] text-muted-foreground">
-          <span className={f === "up" ? "text-win" : "text-loss"}>{f === "up" ? "▲" : "▼"}</span>
+        <span className={cn("text-[11px]", wrFlag(j) ? "text-foreground" : "text-muted-foreground")}>
+          <span className={up ? "text-win" : "text-loss"}>{up ? "▲" : "▼"}</span>
           {x}
         </span>
       )}
@@ -295,7 +305,7 @@ function RoleChips({ items, ownWr }: { items: Judged[]; ownWr: number | null }) 
 function RowLegend() {
   const chip = (s: Strength, text: string) => (
     <span className="flex items-center gap-1.5">
-      <span className={cn("rounded border px-1 text-[10px]", STRENGTH_CLASS[s])}>{s}</span>
+      <span className={cn("rounded border px-1 text-[10px]", STRENGTH_CLASS[s])}>{shownOf(s)}</span>
       {text}
     </span>
   )
@@ -303,6 +313,7 @@ function RowLegend() {
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
       {chip("強勢", "比同類型強（看得出）")}
       {chip("偏強", "高 6 分以上，還在誤差內")}
+      {chip("看不出", "和同類型差不多")}
       {chip("偏弱", "低 6 分以上，還在誤差內")}
       {chip("不強勢", "比同類型弱（看得出）")}
       <span>
@@ -484,12 +495,12 @@ function ExpandRow({
 type DrawerTab = "overview" | "picks"
 
 /** 總覽分頁上的一張數字卡：主數字、區間、判定與一句說明 */
-function SummaryCard({ title, main, sub, strength, note }: { title: string; main: string; sub: string; strength: Strength; note: string }) {
+function SummaryCard({ title, main, sub, strength, label, note }: { title: string; main: string; sub: string; strength: Strength; label: string; note: string }) {
   return (
     <div className="rounded-lg border p-3">
       <div className="flex items-center justify-between gap-2">
         <span className="text-xs text-muted-foreground">{title}</span>
-        <span className={cn("rounded border px-1.5 text-[11px]", STRENGTH_CLASS[strength])}>{strength}</span>
+        <span className={cn("rounded border px-1.5 text-[11px]", STRENGTH_CLASS[strength])}>{label}</span>
       </div>
       <div className="mt-1 font-mono text-2xl font-bold tabular-nums">{main}</div>
       <div className="font-mono text-[11px] tabular-nums text-muted-foreground">{sub}</div>
@@ -689,7 +700,7 @@ function PlayerDrawerBody({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [role, champs.rows, profile])
   const champRows = useMemo(() => {
-    const list = champJudged.items.filter((j) => j.games > 0 && (!onlyClear || isClear(j.strength) || extraOf(j)))
+    const list = champJudged.items.filter((j) => j.games > 0 && (!onlyClear || isClear(j.strength) || wrFlag(j)))
     return [...list].sort((a, b) =>
       sortBy === "games"
         ? b.games - a.games || (b.est ?? 0) - (a.est ?? 0)
@@ -743,6 +754,7 @@ function PlayerDrawerBody({
                 : `${ov.scored} 場`
             }
             strength={ov.strength}
+            label={ov.g?.interval ? shownOf(ov.strength) : "場次不夠"}
             note="和同類型（出裝定位 × 英雄官方主定位）的人比，50＝中位數。不用擊殺、金錢、勝負計算，不受輸贏影響"
           />
           <SummaryCard
@@ -754,6 +766,7 @@ function PlayerDrawerBody({
                 : `${ov.wins} 勝 ${ov.games - ov.wins} 敗`
             }
             strength={wrAll ? strengthOf(wrAll) : "看不出"}
+            label={shownOf(wrAll ? strengthOf(wrAll) : "看不出")}
             note="和 50% 比。好友多半一起打、勝率會互相牽動，用來比人不太準"
           />
         </div>
@@ -1388,8 +1401,8 @@ export function Crew() {
                           <span className={cn("font-mono font-semibold", ov.g?.interval ? NUM_CLASS[ov.strength] : "text-muted-foreground")}>
                             {ov.score === null ? "—" : Math.round(ov.score)}
                           </span>
-                          {ov.strength !== "看不出" && (
-                            <span className={cn("ml-1 rounded border px-1 text-[10px]", STRENGTH_CLASS[ov.strength])}>{ov.strength}</span>
+                          {ov.g?.interval && (
+                            <span className={cn("ml-1 rounded border px-1 text-[10px]", STRENGTH_CLASS[ov.strength])}>{shownOf(ov.strength)}</span>
                           )}
                         </span>
                       </span>
@@ -1414,11 +1427,11 @@ export function Crew() {
               </p>
               <p>
                 每一項都算誤差範圍（95%；單場的分數起伏大，標準差約 27，場次越多範圍越窄）。範圍整段高於 50 才寫「強勢」、整段低於 50 才寫「不強勢」；
-                差 {CONTRIB_GAP} 分以上但範圍還跨過 50 寫「偏強／偏弱」；不到 {MIN_N} 場不下判斷。同一個人同時比好幾種出裝或好幾隻英雄，範圍會再放寬——
+                差 {CONTRIB_GAP} 分以上但範圍還跨過 50 寫「偏強／偏弱」；其餘是「普通」（和同類型差不多）；不到 {MIN_N} 場寫「場次不夠」。同一個人同時比好幾種出裝或好幾隻英雄，範圍會再放寬——
                 一次比二十隻，總有一兩隻看起來特別好或特別差只是運氣。
               </p>
               <p>
-                勝率只當補充：和他自己的整體勝率比，範圍也整段在一邊才標 ▲▼；貢獻強勢但勝率明顯低是「非戰之罪」，貢獻不強勢但勝率明顯高是「靠隊友」。
+                勝率只當補充：和他自己的整體勝率比，範圍也整段在一邊寫「勝率明顯高／低」，差 15 個百分點以上但還在誤差內寫「勝率偏高／偏低」；貢獻強勢但勝率明顯低是「非戰之罪」，貢獻不強勢但勝率明顯高是「靠隊友」。
                 好友多半一起打、勝率互相牽動，每個人的整體勝率目前都和 50% 分不出差別，所以不拿勝率判斷。
               </p>
               <p>
