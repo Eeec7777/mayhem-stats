@@ -110,7 +110,7 @@ cubes:
               mp.dmg_taken * 100.0 / NULLIF(tt.taken, 0) AS taken_share,
               (mp.kills + mp.assists) * 100.0 / NULLIF(mp.team_kills, 0) AS kp
             FROM match_participants mp
-            JOIN matches m ON m.platform_id = mp.platform_id AND m.game_id = mp.game_id
+            JOIN matches m ON m.platform_id = mp.platform_id AND m.game_id = mp.game_id AND m.is_remake = 0
             JOIN team_taken tt ON tt.platform_id = mp.platform_id AND tt.game_id = mp.game_id AND tt.team_id = mp.team_id
             LEFT JOIN gold g ON g.platform_id = mp.platform_id AND g.game_id = mp.game_id AND g.participant_id = mp.participant_id
             LEFT JOIN primary_role pr ON pr.champion_id = mp.champion_id

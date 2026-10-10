@@ -5,6 +5,7 @@ cubes:
   # 每一列的語意是「某人的某一場 × 同場的另一個人」。查詢時務必用
   # subject_puuid 指定要以誰為視角,否則會把所有人的視角混在一起。
   - name: teammates
+    # 重開局不算：下面 JOIN matches rm … is_remake = 0。注意 sql 是折疊區塊（>），換行會被接成一行，裡面不能寫 SQL 的 -- 註解
     sql: >
       SELECT me.rowid * 16 + other.participant_id AS row_key,
              me.rowid AS subject_rowid,
@@ -23,6 +24,8 @@ cubes:
         ON other.platform_id = me.platform_id
        AND other.game_id     = me.game_id
        AND other.puuid      <> me.puuid
+      JOIN matches rm
+        ON rm.platform_id = me.platform_id AND rm.game_id = me.game_id AND rm.is_remake = 0
       LEFT JOIN dim_champions mine_champ  ON mine_champ.id  = me.champion_id
       LEFT JOIN dim_champions other_champ ON other_champ.id = other.champion_id
 

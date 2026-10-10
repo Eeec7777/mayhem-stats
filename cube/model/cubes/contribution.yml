@@ -90,7 +90,7 @@ cubes:
               -- 不會被拉到排名最後面而被扣分；以此為職責的（悠咪、索拉卡、卡瑪）是全額
               COALESCE(MIN(1.0, (e.heal_on_teammates + e.shield_on_teammates) * 1.0 / NULLIF(mp.dmg_to_champions, 0) / 0.2), 1.0) AS ally_w
             FROM match_participants mp
-            JOIN matches m ON m.platform_id = mp.platform_id AND m.game_id = mp.game_id
+            JOIN matches m ON m.platform_id = mp.platform_id AND m.game_id = mp.game_id AND m.is_remake = 0
             JOIN mat_builds b ON b.participant_rowid = mp.rowid
             LEFT JOIN primary_class pc ON pc.champion_id = mp.champion_id
             LEFT JOIN eog_player_stats e ON e.game_id = mp.game_id AND e.puuid = mp.puuid

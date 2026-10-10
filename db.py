@@ -24,6 +24,9 @@ CREATE TABLE IF NOT EXISTS matches (
   game_creation   INTEGER NOT NULL,
   game_duration   INTEGER NOT NULL,
   ended_surrender INTEGER DEFAULT 0,
+  -- 重開局（開打不久有人掛網、投票提前結束）：遊戲裡不算輸贏，但對局資料仍把一隊記為勝。
+  -- 所有統計與對局列表都排除它（語意層的 cube、/api/matches、帳號場次），原始資料保留。
+  is_remake       INTEGER NOT NULL DEFAULT 0,
   -- 開打當下「你這台機器」的本地日期/星期/小時。
   -- 這三個值一定要在寫入時就用 Python 算好,不能留給查詢層。
   -- Cube 的 server 行程跑在 UTC 下,SQLite 的 'localtime' 在那裡等於 UTC,
@@ -268,6 +271,11 @@ def _migrate(conn):
             conn.execute("ALTER TABLE matches ADD COLUMN local_hour INTEGER")
         _backfill_local_time(conn)
 
+    if "is_remake" not in match_cols:
+        with conn:
+            conn.execute("ALTER TABLE matches ADD COLUMN is_remake INTEGER NOT NULL DEFAULT 0")
+        _backfill_remake(conn)
+
     item_cols = {row["name"] for row in conn.execute("PRAGMA table_info(dim_items)")}
     if "price_total" not in item_cols:
         # 值由下一次載入維度表時填上（服務啟動後第一次採集），不必從對局資料回填
@@ -299,6 +307,21 @@ def _migrate(conn):
     # 從第一次啟動新版開始收時間軸：記下時間點，之前入庫的場次不回補
     with conn:
         conn.execute("INSERT OR IGNORE INTO kv (key, value) VALUES ('timeline_since', ?)", (str(int(time.time())),))
+
+
+def is_remake(game):
+    """這場是不是重開局：任何一位參賽者的 stats 標了 gameEndedInEarlySurrender。
+    （「是誰造成的」那幾個欄位客戶端都不填，2026-10 實測 8 場全空。）"""
+    return any((p.get("stats") or {}).get("gameEndedInEarlySurrender") for p in game.get("participants") or [])
+
+
+def _backfill_remake(conn):
+    """從 raw_json 補舊場次的 is_remake。"""
+    rows = conn.execute("SELECT platform_id, game_id, raw_json FROM matches").fetchall()
+    flagged = [(r["platform_id"], r["game_id"]) for r in rows if is_remake(json.loads(r["raw_json"]))]
+    with conn:
+        conn.executemany("UPDATE matches SET is_remake = 1 WHERE platform_id = ? AND game_id = ?", flagged)
+    return len(flagged)
 
 
 def _backfill_local_time(conn):
@@ -428,9 +451,9 @@ def store_match(conn, game):
         cur = conn.execute(
             """INSERT OR IGNORE INTO matches
                (platform_id, game_id, queue_id, game_mode, game_version, map_id,
-                game_creation, game_duration, ended_surrender,
+                game_creation, game_duration, ended_surrender, is_remake,
                 local_date, local_weekday, local_hour, raw_json, ingested_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 platform_id,
                 game_id,
@@ -441,6 +464,7 @@ def store_match(conn, game):
                 game.get("gameCreation"),
                 game.get("gameDuration"),
                 1 if _num(first_stats, "gameEndedInSurrender") else 0,
+                1 if is_remake(game) else 0,
                 *local_buckets(game.get("gameCreation")),
                 json.dumps(game, ensure_ascii=False),
                 int(time.time()),

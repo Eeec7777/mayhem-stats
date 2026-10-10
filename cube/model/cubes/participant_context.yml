@@ -39,7 +39,7 @@ cubes:
               ) AS prev_duration
             FROM match_participants mp
             JOIN matches m
-              ON m.platform_id = mp.platform_id AND m.game_id = mp.game_id
+              ON m.platform_id = mp.platform_id AND m.game_id = mp.game_id AND m.is_remake = 0
           ), marked AS (
             SELECT *,
               CASE

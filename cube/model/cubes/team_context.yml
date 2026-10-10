@@ -57,7 +57,7 @@ cubes:
          AND e.game_id = ta.game_id
          AND e.team_id <> ta.team_id
         JOIN matches m
-          ON m.platform_id = ta.platform_id AND m.game_id = ta.game_id
+          ON m.platform_id = ta.platform_id AND m.game_id = ta.game_id AND m.is_remake = 0
         LEFT JOIN json_each(m.raw_json, '$.teams') jt
           ON json_extract(jt.value, '$.teamId') = ta.team_id
       )

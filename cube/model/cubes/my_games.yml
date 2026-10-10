@@ -24,7 +24,7 @@ cubes:
         ) AS game_of_day
       FROM match_participants mp
       JOIN matches m
-        ON m.platform_id = mp.platform_id AND m.game_id = mp.game_id
+        ON m.platform_id = mp.platform_id AND m.game_id = mp.game_id AND m.is_remake = 0
 
     # 與 participants.yml 相同的 refresh key,理由寫在那裡。SQL 必須一字不差才會被合併。
     refresh_key:

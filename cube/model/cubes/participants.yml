@@ -1,7 +1,14 @@
 cubes:
   - name: participants
     title: 對局表現
-    sql_table: match_participants
+    # 重開局（matches.is_remake）的參賽紀錄不算。rowid 要原樣帶出來：主鍵與衍生表（mat_*）的 participant_rowid 都是它
+    sql: >
+      SELECT mp.rowid AS rowid, mp.*
+      FROM match_participants mp
+      WHERE NOT EXISTS (
+        SELECT 1 FROM matches rm
+        WHERE rm.platform_id = mp.platform_id AND rm.game_id = mp.game_id AND rm.is_remake = 1
+      )
     description: >
       主要事實表:每場對局每位玩家一列。以增幅或裝備為維度查詢時一場會展開成多列,
       因此玩家對局類指標用 count_distinct(玩家對局列),真正對局類指標另用 count_distinct(對局鍵)。

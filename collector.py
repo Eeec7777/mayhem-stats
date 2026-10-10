@@ -329,12 +329,13 @@ class Collector:
                      SELECT 1 FROM match_participants mp
                      WHERE mp.platform_id = m.platform_id AND mp.game_id = m.game_id
                        AND mp.puuid IN (SELECT puuid FROM accounts WHERE is_me = 1)
-                   ) AND m.queue_id = ?""",
+                   ) AND m.queue_id = ? AND m.is_remake = 0""",
                 (lcu.MAYHEM_QUEUE_ID,),
             ).fetchone()["n"]
-            total = conn.execute("SELECT COUNT(*) AS n FROM matches").fetchone()["n"]
+            # 重開局不算（和各頁統計一致）
+            total = conn.execute("SELECT COUNT(*) AS n FROM matches WHERE is_remake = 0").fetchone()["n"]
             mayhem = conn.execute(
-                "SELECT COUNT(*) AS n FROM matches WHERE queue_id = ?",
+                "SELECT COUNT(*) AS n FROM matches WHERE queue_id = ? AND is_remake = 0",
                 (lcu.MAYHEM_QUEUE_ID,),
             ).fetchone()["n"]
             oldest = conn.execute("SELECT MIN(game_creation) AS t FROM matches").fetchone()["t"]

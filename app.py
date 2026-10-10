@@ -794,7 +794,7 @@ def calc_catalog():
                  FROM participant_items pi
                  JOIN matches m USING (platform_id, game_id)
                  JOIN dim_items i ON i.id = pi.item_id
-                WHERE m.queue_id = ? AND i.price_total > 0
+                WHERE m.queue_id = ? AND m.is_remake = 0 AND i.price_total > 0
                   -- 20 萬以上的編號是增幅給的道具（究極九頭蛇、烏莉特的法帽、黃金鍋鏟…），商店買不到
                   AND i.id < 200000
                 GROUP BY i.id
@@ -863,6 +863,8 @@ def list_players(request: Request):
                       COALESCE(a.is_me, 0) AS is_me, COALESCE(a.tracked, 0) AS tracked
                FROM match_participants mp
                LEFT JOIN accounts a ON a.puuid = mp.puuid
+               -- 重開局不算（matches.is_remake）
+               WHERE NOT EXISTS (SELECT 1 FROM matches rm WHERE rm.platform_id = mp.platform_id AND rm.game_id = mp.game_id AND rm.is_remake = 1)
                GROUP BY mp.puuid
                ORDER BY is_me DESC, tracked DESC, games DESC"""
         )]
@@ -1022,7 +1024,8 @@ def recent_matches(
             LEFT JOIN dim_champions dc ON dc.id = mp.champion_id
             WHERE """ + subject_sql
         params: list = [*subject_params]
-        slice_sql = ""
+        # 重開局不列、也不算進總數與勝敗（遊戲裡不算輸贏）；單場戰報 /api/match/... 仍看得到
+        slice_sql = " AND m.is_remake = 0"
         slice_params: list = []
         if queue is not None:
             slice_sql += " AND m.queue_id = ?"
@@ -1244,7 +1247,7 @@ def list_accounts():
                 """SELECT a.puuid, a.riot_id, a.tracked,
                           -- 和我同場的場次
                           (SELECT COUNT(DISTINCT mp.game_id) FROM match_participants mp
-                           WHERE mp.puuid = a.puuid
+                           WHERE mp.puuid = a.puuid AND NOT EXISTS (SELECT 1 FROM matches rm WHERE rm.platform_id = mp.platform_id AND rm.game_id = mp.game_id AND rm.is_remake = 1)
                              AND EXISTS (SELECT 1 FROM match_participants me
                                          WHERE me.platform_id = mp.platform_id
                                            AND me.game_id = mp.game_id
@@ -1252,7 +1255,7 @@ def list_accounts():
                           ) AS shared,
                           -- 資料庫裡他總共出現幾場（追蹤之後會包含我沒參與的）
                           (SELECT COUNT(DISTINCT mp.game_id) FROM match_participants mp
-                           WHERE mp.puuid = a.puuid) AS games
+                           WHERE mp.puuid = a.puuid AND NOT EXISTS (SELECT 1 FROM matches rm WHERE rm.platform_id = mp.platform_id AND rm.game_id = mp.game_id AND rm.is_remake = 1)) AS games
                    FROM accounts a WHERE a.tracked = 1 AND a.is_me = 0
                    ORDER BY games DESC"""
             ).fetchall()
@@ -1262,7 +1265,7 @@ def list_accounts():
             for row in conn.execute(
                 """SELECT mp.riot_id, mp.puuid, COUNT(DISTINCT mp.game_id) AS games
                    FROM match_participants mp
-                   WHERE mp.puuid NOT IN (SELECT puuid FROM accounts WHERE is_me = 1)
+                   WHERE mp.puuid NOT IN (SELECT puuid FROM accounts WHERE is_me = 1) AND NOT EXISTS (SELECT 1 FROM matches rm WHERE rm.platform_id = mp.platform_id AND rm.game_id = mp.game_id AND rm.is_remake = 1)
                    GROUP BY mp.puuid
                    ORDER BY games DESC LIMIT 60"""
             ).fetchall()

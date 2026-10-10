@@ -1,6 +1,7 @@
 cubes:
   - name: matches
-    sql_table: matches
+    # 重開局（matches.is_remake）不算：遊戲裡不算輸贏，但對局資料仍把一隊記為勝。原始資料保留在資料表裡
+    sql: SELECT * FROM matches WHERE is_remake = 0
     description: 一場對局的表頭。時間欄位在資料庫裡是 epoch 毫秒(UTC),這裡轉成時間戳給 Cube,時區換算交由查詢端指定。
 
     # 與 participants.yml 相同的 refresh key,理由寫在那裡。SQL 必須一字不差才會被合併。

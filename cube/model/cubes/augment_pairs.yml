@@ -25,7 +25,7 @@ cubes:
           db.name AS augment_b_name
         FROM match_participants mp
         JOIN matches m
-          ON m.platform_id = mp.platform_id AND m.game_id = mp.game_id
+          ON m.platform_id = mp.platform_id AND m.game_id = mp.game_id AND m.is_remake = 0
         JOIN participant_augments a
           ON a.platform_id = mp.platform_id AND a.game_id = mp.game_id AND a.participant_id = mp.participant_id
         JOIN participant_augments b
