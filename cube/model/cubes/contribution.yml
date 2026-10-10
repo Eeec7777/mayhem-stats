@@ -37,8 +37,9 @@ cubes:
   #
   # 綜合貢獻＝各軸百分位依出裝定位加權平均（權重在下面 weights，缺值的軸不算、權重重新分配），
   # 再在同類型內取一次名次百分位。權重是判斷不是估出來的，各自隨機 ±30% 排名相關仍 ≥ 0.99。
-  #   輸出位（AD／AP 輸出）輸出 55、存活 20、參團 15、控場 10；刺客輸出 50、存活 25
-  #   鬥士・AP 鬥士  輸出 30、承傷 25、存活 15、參團 15、控場 10
+  #   輸出位（AD／AP 輸出）輸出 50、存活 20、參團 15、控場 15；刺客輸出 45、存活 25
+  #   鬥士・AP 鬥士  輸出 25、承傷 25、存活 15、參團 15、控場 15
+  #   （2026-10-10 控場從 10 調到 15、從輸出扣：使用者的判斷——帶控場的輸出位／鬥士做的是同樣重要的工作，不該只看傷害）
   #   坦克         承傷 35、參團 20、控場 20、輸出 10、存活 10
   #   輔助         參團 25、控場 25、存活 20、輸出 10、承傷 10
   #   治療護盾（有量才加，再乘分量）輔助 20、坦克・鬥士・AP 鬥士 10、其他 5
@@ -132,7 +133,7 @@ cubes:
             FROM stats
           ),
           ranked AS (
-            SELECT participant_rowid, build_role, cell, queue_id, has_eog, m_ally, ally_w,
+            SELECT participant_rowid, build_role, cell, acell, queue_id, has_eog, m_ally, ally_w,
               CASE WHEN r_dmg IS NULL THEN NULL
                            WHEN COUNT(*) OVER (PARTITION BY queue_id, cell, r_dmg IS NULL) = 1 THEN 50.0
                            ELSE 100.0 * (PERCENT_RANK() OVER (PARTITION BY queue_id, cell, r_dmg IS NULL ORDER BY r_dmg) * (COUNT(*) OVER (PARTITION BY queue_id, cell, r_dmg IS NULL) - 1)
@@ -215,9 +216,9 @@ cubes:
           ),
           weights(build_role, w_dmg, w_soak, w_surv, w_kp, w_cc, w_heal) AS (
             VALUES ('坦克', 10, 35, 10, 20, 20, 10),
-                   ('AD 鬥士', 30, 25, 15, 15, 10, 10), ('AP 鬥士', 30, 25, 15, 15, 10, 10),
-                   ('AD 輸出', 55, 0, 20, 15, 10, 5), ('AP 輸出', 55, 0, 20, 15, 10, 5),
-                   ('AD 刺客', 50, 0, 25, 15, 10, 5), ('AP 刺客', 50, 0, 25, 15, 10, 5),
+                   ('AD 鬥士', 25, 25, 15, 15, 15, 10), ('AP 鬥士', 25, 25, 15, 15, 15, 10),
+                   ('AD 輸出', 50, 0, 20, 15, 15, 5), ('AP 輸出', 50, 0, 20, 15, 15, 5),
+                   ('AD 刺客', 45, 0, 25, 15, 15, 5), ('AP 刺客', 45, 0, 25, 15, 15, 5),
                    ('輔助', 10, 10, 20, 25, 25, 20),
                    ('未成形', 1, 1, 1, 1, 1, 5)
           ),
@@ -232,8 +233,25 @@ cubes:
               ROUND((COALESCE(k.pa_dmg, 0) * COALESCE(w.w_dmg, 1) + COALESCE(k.pa_soak, 0) * COALESCE(w.w_soak, 1) + COALESCE(k.pa_surv, 0) * COALESCE(w.w_surv, 1)
                + COALESCE(k.pa_kp, 0) * COALESCE(w.w_kp, 1) + COALESCE(k.pa_cc, 0) * COALESCE(w.w_cc, 1) + COALESCE(k.pa_heal, 0) * COALESCE(w.w_heal, 5) * k.heal_k)
               / NULLIF((k.pa_dmg IS NOT NULL) * COALESCE(w.w_dmg, 1) + (k.pa_soak IS NOT NULL) * COALESCE(w.w_soak, 1) + (k.pa_surv IS NOT NULL) * COALESCE(w.w_surv, 1)
-                       + (k.pa_kp IS NOT NULL) * COALESCE(w.w_kp, 1) + (k.pa_cc IS NOT NULL) * COALESCE(w.w_cc, 1) + (k.pa_heal IS NOT NULL) * COALESCE(w.w_heal, 5) * k.heal_k, 0), 9) AS perf
+                       + (k.pa_kp IS NOT NULL) * COALESCE(w.w_kp, 1) + (k.pa_cc IS NOT NULL) * COALESCE(w.w_cc, 1) + (k.pa_heal IS NOT NULL) * COALESCE(w.w_heal, 5) * k.heal_k, 0), 9) AS perf_raw
             FROM healed k LEFT JOIN weights w ON w.build_role = k.build_role
+          ),
+          spread AS (
+            SELECT *,
+              AVG(perf_raw) OVER (PARTITION BY queue_id, acell) AS perf_avg,
+              AVG(perf_raw * perf_raw) OVER (PARTITION BY queue_id, acell) AS perf_sq
+            FROM combined
+          ),
+          scaled AS (
+            -- 表現分在比較對象（同類型 × 時長帶）內拉成同一把尺：平均 50、標準差 20，夾在 0～100。
+            -- 為什麼：加權平均的離散程度看權重怎麼分——輸出位幾乎只看輸出一軸（標準差 20.7），坦克、輔助的工作分散在
+            -- 承傷／參團／控場幾個不太相關的軸上（17.8／15.0），結果坦克、輔助打得再好分數也上不去（P90 74／71 vs 79），
+            -- 每隊最高分是坦克的只有應有的 0.73 倍、輔助 0.41 倍。拉成同一把尺後「同類型裡打得一樣出色」就是同一個分數。
+            SELECT *,
+              CASE WHEN perf_raw IS NULL THEN NULL
+                   WHEN perf_sq - perf_avg * perf_avg <= 1e-9 THEN 50.0
+                   ELSE ROUND(MIN(100.0, MAX(0.0, 50.0 + 20.0 * (perf_raw - perf_avg) / SQRT(perf_sq - perf_avg * perf_avg))), 9) END AS perf
+            FROM spread
           )
           SELECT participant_rowid, build_role, cell, p_dmg, p_soak, p_surv, p_kp, p_cc, p_heal, heal_src,
             CASE WHEN comp IS NULL THEN NULL
@@ -242,7 +260,7 @@ cubes:
                                          + CUME_DIST() OVER (PARTITION BY queue_id, cell, comp IS NULL ORDER BY comp) * COUNT(*) OVER (PARTITION BY queue_id, cell, comp IS NULL) - 1)
                                 / (2.0 * (COUNT(*) OVER (PARTITION BY queue_id, cell, comp IS NULL) - 1)) END AS score,
             pa_dmg, pa_soak, pa_surv, pa_kp, pa_cc, pa_heal, perf
-          FROM combined
+          FROM scaled
 
     # 與 participants.yml 相同的 refresh key，理由寫在那裡。SQL 必須一字不差才會被合併。
     refresh_key:

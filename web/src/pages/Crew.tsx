@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, typ
 import { ArrowRight, Check, ChevronDown, ChevronsUpDown, Search } from "lucide-react"
 import { RecordCell } from "@/components/cells"
 import { ContribBars, ContribScore } from "@/components/Contribution"
-import { CONTRIB_GAP, CONTRIB_MEASURES, CONTRIB_PARTS } from "@/hooks/useContribution"
+import { PERF_GAP, PERF_MEASURES, PERF_PARTS } from "@/hooks/useContribution"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
@@ -23,6 +23,7 @@ import { useNavigate } from "@/lib/nav"
 import { cn } from "@/lib/utils"
 import {
   MIN_N,
+  PERF_SD,
   STRENGTH_CLASS,
   gapOf,
   scoreGapOf,
@@ -36,10 +37,13 @@ import {
 import { BUILD_ROLES, BUILD_SHORT, NO_LIMIT, round0, splitRiotId } from "./shared"
 
 // ── 判斷：和陣容、敗因、節奏三頁同一套「區間」講法 ─────────────────────────────
-// 隊內貢獻（contribution.score）是同類型（出裝定位 × 英雄官方主定位）裡的名次百分位，同類型的中位數＝50；
-// 不用擊殺、金錢、勝負當輸入，不受輸贏影響，所以判斷以它為主。
-//   和 50 比，95% 區間（標準誤＝單場標準差 27 ÷ √有分數的場數）整段高於 50 是「強勢」、整段低於 50 是「不強勢」；
-//   差 CONTRIB_GAP（6）分以上但區間還跨過 50 是「偏強／偏弱」；其餘畫面上寫「普通」；不到 MIN_N 場寫「場次不夠」。
+// 判斷用當局表現分（contribution.perf）：每分鐘的實際數值和同類型（出裝定位 × 英雄官方主定位）、同時長帶的人比，50＝中位數；
+// 坦克、輔助和輸出位拉成同一把尺（各比較對象內標準差都是 20，見 contribution.yml），不用擊殺、金錢、勝負當輸入。
+// 2026-10-10 從隊內排名（contribution.score）換過來：隊內排名是零和的，而好友幾乎都五排，
+//   它量到的是「這群朋友之間誰分到比較多工作」——和強的朋友同隊的人一定被壓低（同隊時 64.7 對 31.1）。
+//   原本不用表現分是因為它和勝負有關（個人相關 0.19），但五排的朋友共享輸贏，這個顧慮在這頁不成立。
+//   和 50 比，95% 區間（標準誤＝單場標準差 PERF_SD 19 ÷ √有分數的場數）整段高於 50 是「強勢」、整段低於 50 是「不強勢」；
+//   差 PERF_GAP（4）分以上但區間還跨過 50 是「偏強／偏弱」；其餘畫面上寫「普通」；不到 MIN_N 場寫「場次不夠」。
 //   同一個人同時比好幾種出裝（或好幾隻英雄）時用 zFor(k) 放寬區間——一次比二十隻，總會有一兩隻只是運氣。
 // 勝率只當補充：和他自己的整體勝率比，區間（同樣放寬）整段在一邊才標 ▲▼，以及「非戰之罪」（貢獻強勢但勝率明顯低）、
 //   「靠隊友」（貢獻不強勢但勝率明顯高）。好友多半一起打、勝率互相牽動，2026-10 實測每個人的整體勝率都和 50% 分不出差別。
@@ -49,22 +53,22 @@ import { BUILD_ROLES, BUILD_SHORT, NO_LIMIT, round0, splitRiotId } from "./share
 
 /** 一覽表「英雄」分頁每邊最多放幾隻頭像；其餘寫「還有 N 隻」，完整排名在點開的抽屜裡 */
 const CHAMPS_SHOWN = 5
-/** 場次、勝負、隊內貢獻，以及算區間要用的「有隊內貢獻的場次」（重開局沒有分數） */
+/** 場次、勝負、表現分，以及算區間要用的「有表現分的場次」（重開局沒有分數） */
 const STAT_MEASURES = [
   "participants.games",
   "participants.wins",
   "participants.losses",
   "participants.winrate",
-  "contribution.score",
+  "contribution.perf",
   "contribution.scored_games",
 ]
 
 const n0 = (r: CubeRow | undefined, k: string) => (r ? (num(r[k]) ?? 0) : 0)
 const opt = (r: CubeRow | undefined, k: string) => (r ? num(r[k]) : null)
 const signed = (v: number, digits = 1) => `${v >= 0 ? "+" : ""}${v.toFixed(digits)}`
-/** 隊內貢獻換成「和同類型中位數（50）的差距」 */
+/** 表現分換成「和同類型中位數（50）的差距」 */
 const dev = (r: CubeRow | undefined) => {
-  const v = opt(r, "contribution.score")
+  const v = opt(r, "contribution.perf")
   return v === null ? null : v - 50
 }
 
@@ -89,12 +93,12 @@ function PlayerName({ player, className }: { player: Player; className?: string 
 
 type Stat = { key: string; label: string; icon?: string; games: number; wins: number; winrate: number | null; score: number | null; scored: number }
 type Judged = Stat & {
-  /** 隊內貢獻和 50 比（區間已依同時比幾組放寬）；沒有分數是 null */
+  /** 表現分和 50 比（區間已依同時比幾組放寬）；沒有分數是 null */
   g: ScoreGap | null
   strength: Strength
   /** 勝率和他自己的整體勝率比（區間同樣放寬）；只用來標 ▲▼ 與「非戰之罪／靠隊友」 */
   wr: Gap | null
-  /** 排序用：隊內貢獻往他自己的平均收縮（SHRINK_K 場虛擬場次），一兩場的不會排到最前面 */
+  /** 排序用：表現分往他自己的平均收縮（SHRINK_K 場虛擬場次），一兩場的不會排到最前面 */
   est: number | null
 }
 type Own = { score: number | null; winrate: number | null }
@@ -107,6 +111,7 @@ type Profile = {
   roleK: number
   champs: Judged[]
   champK: number
+  style: PlayStyle
 }
 
 const statOf = (r: CubeRow | undefined, key: string, label: string, icon?: string): Stat => ({
@@ -116,15 +121,15 @@ const statOf = (r: CubeRow | undefined, key: string, label: string, icon?: strin
   games: n0(r, "participants.games"),
   wins: n0(r, "participants.wins"),
   winrate: opt(r, "participants.winrate"),
-  score: opt(r, "contribution.score"),
+  score: opt(r, "contribution.perf"),
   scored: n0(r, "contribution.scored_games"),
 })
 
 function judge(s: Stat, own: Own, z: number): Judged {
-  const g = s.score === null ? null : scoreGapOf(s.score, s.scored, z)
+  const g = s.score === null ? null : scoreGapOf(s.score, s.scored, z, PERF_SD)
   const wr = own.winrate === null || !s.games ? null : gapOf({ key: s.key, label: s.label, games: s.games, wins: s.wins }, own.winrate, z)
   const est = s.score === null || own.score === null ? null : (s.scored * s.score + SHRINK_K * own.score) / (s.scored + SHRINK_K)
-  return { ...s, g, strength: g ? scoreStrengthOf(g, CONTRIB_GAP) : "看不出", wr, est }
+  return { ...s, g, strength: g ? scoreStrengthOf(g, PERF_GAP) : "看不出", wr, est }
 }
 
 /** 一個人的一組（他的幾種出裝，或他玩過的英雄）一起判斷：樣本夠的有 k 組，區間就放寬到「這 k 組一起看還是 95%」 */
@@ -152,7 +157,7 @@ function extraOf(j: Judged) {
   return null
 }
 
-/** 畫面上的字：場次夠、但隊內貢獻和 50 差不多的是「普通」（不是「看不出」——那會被讀成場次不夠） */
+/** 畫面上的字：場次夠、但表現分和 50 差不多的是「普通」（不是「看不出」——那會被讀成場次不夠） */
 const shownOf = (s: Strength) => (s === "看不出" ? "普通" : s)
 
 const isPos = (s: Strength) => s === "強勢" || s === "偏強"
@@ -160,10 +165,10 @@ const isNeg = (s: Strength) => s === "不強勢" || s === "偏弱"
 const isClear = (s: Strength) => s === "強勢" || s === "不強勢"
 
 function tipOf(j: Judged, ownWr: number | null) {
-  const lines = [`${j.label}・${j.games} 場${j.scored !== j.games ? `（有隊內貢獻的 ${j.scored} 場）` : ""}`]
+  const lines = [`${j.label}・${j.games} 場${j.scored !== j.games ? `（有表現分的 ${j.scored} 場）` : ""}`]
   if (j.g) {
     lines.push(
-      `隊內貢獻 ${Math.round(j.g.mean)}（50＝同類型的中位數）` +
+      `表現分 ${Math.round(j.g.mean)}（50＝同類型的中位數）` +
         (j.g.interval
           ? `，區間 ${Math.round(50 + j.g.interval[0])}～${Math.round(50 + j.g.interval[1])} → ${shownOf(j.strength)}`
           : `；不到 ${MIN_N} 場，不下判斷`),
@@ -279,8 +284,8 @@ function MiniHex({ data, total, size = 96 }: { data: HexDatum[]; total: number; 
   )
 }
 
-/** 抽屜總覽的雷達：和一覽表的迷你雷達同一套——形狀是各出裝佔他場次的比例、顏色是隊內貢獻的判定。
- *  原本用共用的 RadarChart，它的標籤顏色是「勝率和他自己的平均比」，和一覽表的判定（隊內貢獻）不是同一件事，
+/** 抽屜總覽的雷達：和一覽表的迷你雷達同一套——形狀是各出裝佔他場次的比例、顏色是表現分的判定。
+ *  原本用共用的 RadarChart，它的標籤顏色是「勝率和他自己的平均比」，和一覽表的判定（表現分）不是同一件事，
  *  同一個坦克一邊寫偏強、一邊是紅字，看起來像數字對不上。 */
 function RoleHex({ roles, total, selected, onPick }: { roles: Judged[]; total: number; selected: string | null; onPick: (label: string) => void }) {
   const W = 420
@@ -404,7 +409,7 @@ function HowWeJudge({ children }: { children: ReactNode }) {
 
 // ── 全員一覽：英雄 ──────────────────────────────────────────────────────────
 
-/** 英雄頭像：名次、判定外框、隊內貢獻。給 onClick 時整顆可以點（在整列按鈕裡面也可以，點擊不會傳到外層）；
+/** 英雄頭像：名次、判定外框、表現分。給 onClick 時整顆可以點（在整列按鈕裡面也可以，點擊不會傳到外層）；
  *  放在別的按鈕裡時，外層按鈕加上 group，滑過一樣會有上浮與變亮 */
 function ChampBadge({ j, rank, ownWr, onClick }: { j: Judged; rank: number; ownWr: number | null; onClick?: () => void }) {
   const p = isPos(j.strength)
@@ -644,17 +649,195 @@ function SummaryCard({ title, main, sub, strength, label, note }: { title: strin
   )
 }
 
+// ── 玩家類型：常玩什麼（出裝分布、AD／AP、英雄池）與打法（表現分六項哪裡突出） ─────────────
+// 位置看出裝定位的場次比例，打法看表現分六項的平均（各項都和同類型比，50＝中位數，所以是「同樣的位置裡他哪裡做得多」）。
+// 門檻是判斷：六項的平均在 300 場時誤差約 ±2，差 AXIS_LEAN 分以上才算突出；場次不到 STYLE_MIN 只講位置不講打法。
+
+const STYLE_MIN = 20
+/** 打法用的六項（表現分），順序同 PERF_PARTS */
+const AXES = [
+  { key: "contribution.perf_dmg", label: "輸出", up: "輸出高", down: "輸出偏低" },
+  { key: "contribution.perf_soak", label: "承傷", up: "很能扛", down: "承傷少" },
+  { key: "contribution.perf_surv", label: "存活", up: "很少死", down: "常陣亡" },
+  { key: "contribution.perf_kp", label: "參團", up: "常參團", down: "參團少" },
+  { key: "contribution.perf_cc", label: "控場", up: "控場多", down: "控場少" },
+  { key: "contribution.perf_heal", label: "治療護盾", up: "常補血護盾", down: "補給少" },
+] as const
+const AXIS_LEAN = 4
+
+type PlayStyle = {
+  /** 「AD 後排輸出」這種位置描述 */
+  position: string
+  /** 「衝鋒型」這種打法；場次不夠或沒有明顯特徵是 null */
+  archetype: string | null
+  archetypeNote: string | null
+  /** 出裝比例，由多到少（只列有玩的）；base 是一般玩家的比例 */
+  mix: { label: string; share: number; base: number }[]
+  /** 比一般玩家明顯多玩的出裝 */
+  favors: { label: string; share: number; base: number }[]
+  adShare: number | null
+  champCount: number
+  top5Share: number
+  topChamps: string[]
+  /** 有表現分的場次夠 STYLE_MIN，才講打法 */
+  enough: boolean
+  /** 五項的平均（和同類型比，50＝中位數；治療護盾不算） */
+  axes: { label: string; value: number | null; up: string; down: string }[]
+}
+
+function playStyleOf(roles: Judged[], champs: Judged[], sum: CubeRow | undefined, base: Map<string, number>, scored: number): PlayStyle {
+  const total = roles.reduce((a, j) => a + j.games, 0)
+  const share = (labels: string[]) => (total ? roles.filter((j) => labels.includes(j.label)).reduce((a, j) => a + j.games, 0) / total : 0)
+  const carry = share(["AD 輸出", "AP 輸出"])
+  const assassin = share(["AD 刺客", "AP 刺客"])
+  const front = share(["坦克", "AD 鬥士", "AP 鬥士"])
+  const support = share(["輔助"])
+  const ad = share(["AD 輸出", "AD 刺客", "AD 鬥士"])
+  const ap = share(["AP 輸出", "AP 刺客", "AP 鬥士"])
+  const adShare = ad + ap > 0 ? ad / (ad + ap) : null
+  const dmg = adShare === null ? "" : adShare >= 0.62 ? "AD " : adShare <= 0.38 ? "AP " : ""
+  const position =
+    carry >= 0.5
+      ? `${dmg}後排輸出`
+      : front >= 0.45
+        ? `${dmg}前排（坦克／鬥士）`
+        : assassin >= 0.35
+          ? `${dmg}刺客`
+          : support >= 0.3
+            ? "輔助"
+            : `${dmg}什麼位置都玩`
+  const mix = roles
+    .filter((j) => j.games > 0)
+    .map((j) => ({ label: j.label, share: total ? j.games / total : 0, base: base.get(j.label) ?? 0 }))
+    .sort((a, b) => b.share - a.share)
+  const favors = mix.filter((m) => m.share >= 0.08 && m.base > 0 && m.share / m.base >= 1.5)
+
+  const played = champs.filter((j) => j.games > 0).sort((a, b) => b.games - a.games)
+  const champGames = played.reduce((a, j) => a + j.games, 0)
+  const top5Share = champGames ? played.slice(0, 5).reduce((a, j) => a + j.games, 0) / champGames : 0
+
+  // 治療護盾只在有治療或護盾隊友的場次才有值，平均只代表那幾場（可能只占一成），不拿來判斷打法
+  const axes = AXES.filter((a) => a.label !== "治療護盾").map((a) => ({ label: a.label, value: opt(sum, a.key), up: a.up, down: a.down }))
+  const v = (label: string) => axes.find((a) => a.label === label)?.value ?? 50
+  let archetype: string | null = null
+  let archetypeNote: string | null = null
+  if (scored >= STYLE_MIN) {
+    const ups = axes.filter((a) => a.value !== null && a.value >= 50 + AXIS_LEAN)
+    const downs = axes.filter((a) => a.value !== null && a.value <= 50 - AXIS_LEAN)
+    if (v("存活") <= 44 && Math.max(v("承傷"), v("輸出")) >= 54) {
+      archetype = "衝鋒型"
+      archetypeNote = "常衝在前面：輸出或承傷做得比同類型多，但陣亡也比較多"
+    } else if (v("存活") >= 56 && v("輸出") >= 54) {
+      archetype = "穩健輸出型"
+      archetypeNote = "輸出高、又死得少"
+    } else if (v("控場") >= 57) {
+      archetype = "控場型"
+      archetypeNote = "控制敵人的時間比同類型多"
+    } else if (v("參團") >= 57) {
+      archetype = "團戰型"
+      archetypeNote = "隊上的擊殺大多有他的份"
+    } else if (ups.length >= 3) {
+      archetype = "全面型"
+      archetypeNote = "好幾項都比同類型多，沒有明顯的洞"
+    } else if (v("存活") >= 52 && v("輸出") <= 42) {
+      archetype = "保守型"
+      archetypeNote = "死得不多，但輸出也比同類型少：可能站得比較後面"
+    } else if (!ups.length && !downs.length) {
+      archetype = "均衡型"
+      archetypeNote = "輸出、承傷、存活、參團、控場都和同類型的中位數差不多"
+    }
+  }
+  return {
+    position,
+    archetype,
+    archetypeNote,
+    mix,
+    favors,
+    adShare,
+    champCount: played.length,
+    top5Share,
+    topChamps: played.slice(0, 5).map((j) => j.label),
+    enough: scored >= STYLE_MIN,
+    axes,
+  }
+}
+
+const pct0 = (v: number) => `${Math.round(v * 100)}%`
+/** 一行版：位置・打法；沒有對上任何一型時，改寫最突出的一兩項（「很少死」） */
+const styleLine = (s: PlayStyle) => {
+  if (s.archetype) return `${s.position}・${s.archetype}`
+  if (!s.enough) return s.position
+  const top = s.axes
+    .filter((a) => a.value !== null && Math.abs(a.value - 50) >= AXIS_LEAN)
+    .sort((a, b) => Math.abs((b.value ?? 50) - 50) - Math.abs((a.value ?? 50) - 50))
+    .slice(0, 2)
+    .map((a) => ((a.value ?? 50) > 50 ? a.up : a.down))
+  return top.length ? `${s.position}・${top.join('、')}` : s.position
+}
+
+/** 總覽分頁的「玩家類型」卡片 */
+function StyleCard({ style, scored }: { style: PlayStyle; scored: number }) {
+  const notable = style.axes
+    .filter((a) => a.value !== null && Math.abs(a.value - 50) >= AXIS_LEAN)
+    .sort((a, b) => (b.value ?? 0) - (a.value ?? 0))
+  return (
+    <div className="rounded-lg border p-3" data-testid="crew-style">
+      <div className="text-[11px] text-muted-foreground">玩家類型</div>
+      <div className="mt-0.5 text-lg font-semibold">{styleLine(style)}</div>
+      {style.archetypeNote && <div className="text-[12px] text-muted-foreground">{style.archetypeNote}</div>}
+      <dl className="mt-2 grid gap-x-3 gap-y-1.5 text-[12px] sm:grid-cols-[5.5rem_minmax(0,1fr)]">
+        <dt className="text-muted-foreground">常玩的出裝</dt>
+        <dd>
+          {style.mix.slice(0, 4).map((m, i) => (
+            <span key={m.label}>
+              {i > 0 && "、"}
+              {m.label} <span className="font-mono tabular-nums">{pct0(m.share)}</span>
+            </span>
+          ))}
+          {style.favors.length > 0 && (
+            <span className="block text-muted-foreground">
+              比一般玩家多玩 {style.favors.map((m) => `${m.label}（他 ${pct0(m.share)}，一般 ${pct0(m.base)}）`).join("、")}
+            </span>
+          )}
+        </dd>
+        <dt className="text-muted-foreground">AD／AP</dt>
+        <dd>{style.adShare === null ? "—" : `AD 裝 ${pct0(style.adShare)}、AP 裝 ${pct0(1 - style.adShare)}（坦克與輔助不算）`}</dd>
+        <dt className="text-muted-foreground">英雄池</dt>
+        <dd>
+          玩過 {style.champCount} 隻，最常玩的 5 隻占 <span className="font-mono tabular-nums">{pct0(style.top5Share)}</span>
+          {style.topChamps.length > 0 && <span className="block text-muted-foreground">{style.topChamps.join("、")}</span>}
+        </dd>
+        <dt className="text-muted-foreground">打法</dt>
+        <dd>
+          {scored < STYLE_MIN
+            ? `有表現分的場次不到 ${STYLE_MIN} 場，先不判斷`
+            : notable.length
+              ? notable.map((a, i) => (
+                  <span key={a.label}>
+                    {i > 0 && "、"}
+                    <span className={(a.value ?? 50) > 50 ? "text-win" : "text-loss"}>{(a.value ?? 50) > 50 ? a.up : a.down}</span>
+                    <span className="font-mono text-muted-foreground tabular-nums">（{a.label} {Math.round(a.value ?? 50)}）</span>
+                  </span>
+                ))
+              : "五項都和同類型的中位數差不多"}
+          <span className="block text-muted-foreground">各項都和同類型、同時長帶的人比，50＝中位數，所以是「同樣的位置裡他哪裡做得多」；治療護盾只有部分場次有量，不算進來</span>
+        </dd>
+      </dl>
+    </div>
+  )
+}
+
 /** 一句話講這個人整體的情形：只根據看得出的差別 */
 function readingOf(p: Profile) {
   const s = p.overall.strength
   const w = p.overallWr ? strengthOf(p.overallWr) : "看不出"
   if (s === "強勢")
     return w === "強勢"
-      ? "隊內扛得比同類型的人多，勝率也明顯高於 50%。"
-      : "隊內扛得比同類型的人多，但勝率和 50% 分不出差別：輸贏很大一部分取決於隊友與隨機拿到的陣容。"
+      ? "打得比同類型的人好，勝率也明顯高於 50%。"
+      : "打得比同類型的人好，但勝率和 50% 分不出差別：輸贏很大一部分取決於隊友與隨機拿到的陣容。"
   if (s === "不強勢")
-    return w === "不強勢" ? "隊內扛得比同類型的人少，勝率也明顯低於 50%。" : "隊內扛得比同類型的人少，但勝率沒有跟著變低：隊友補上了不少。"
-  return "隊內貢獻和同類型的人差不多（差距還在誤差內）。"
+    return w === "不強勢" ? "打得比同類型的人差，勝率也明顯低於 50%。" : "打得比同類型的人差，但勝率沒有跟著變低：隊友補上了不少。"
+  return "表現分和同類型的人差不多（差距還在誤差內）。"
 }
 
 /** 總覽分頁的「看得出的強項／弱項」：只列區間整段在一邊的，其餘只講有幾項 */
@@ -718,7 +901,7 @@ function Highlights({
   )
 }
 
-/** 出裝定位分頁：一種出裝一列，隊內貢獻畫成區間（中線＝同類型的中位數 50），右邊是勝率與判定 */
+/** 出裝定位分頁：一種出裝一列，表現分畫成區間（中線＝同類型的中位數 50），右邊是勝率與判定 */
 function RoleForest({ profile, selected, onPick }: { profile: Profile; selected: string | null; onPick: (role: string) => void }) {
   const ownWr = profile.overall.winrate
   const far = profile.roles.flatMap((j) => (j.g?.interval ? [Math.abs(j.g.interval[0]), Math.abs(j.g.interval[1])] : []))
@@ -728,7 +911,7 @@ function RoleForest({ profile, selected, onPick }: { profile: Profile; selected:
   return (
     <div className="space-y-2">
       <div className="text-[11px] text-muted-foreground">
-        點是他這種出裝的隊內貢獻、線是區間（同時比 {profile.roleK} 種出裝，已放寬）；區間整段在中線同一邊才上色。點一列，下面只列他用這種出裝玩過的英雄
+        點是他這種出裝的表現分、線是區間（同時比 {profile.roleK} 種出裝，已放寬）；區間整段在中線同一邊才上色。點一列，下面只列他用這種出裝玩過的英雄
       </div>
       <div>
         <div className={cn("grid items-end gap-x-2", cols)}>
@@ -823,7 +1006,7 @@ function PlayerDrawerBody({
   const own: Own = { score: profile.overall.score, winrate: ownWr }
   const roleFilter = role ? [{ member: "builds.build_role", operator: "equals" as const, values: [role] }] : []
   const contrib = useCube(
-    apply({ measures: CONTRIB_MEASURES, filters: [crewFilter([player.puuid]), ...roleFilter], limit: 1 }, "all"),
+    apply({ measures: PERF_MEASURES, filters: [crewFilter([player.puuid]), ...roleFilter], limit: 1 }, "all"),
   )
   const champs = useCube(
     apply(
@@ -907,7 +1090,7 @@ function PlayerDrawerBody({
       <TabsContent value="overview" className="reveal space-y-4">
         <div className="grid gap-3 sm:grid-cols-2">
           <SummaryCard
-            title="隊內貢獻"
+            title="表現分"
             main={ov.score === null ? "—" : String(Math.round(ov.score))}
             sub={
               ov.g?.interval
@@ -916,7 +1099,7 @@ function PlayerDrawerBody({
             }
             strength={ov.strength}
             label={ov.g?.interval ? shownOf(ov.strength) : "場次不夠"}
-            note="和同類型（出裝定位 × 英雄官方主定位）的人比，50＝中位數。不用擊殺、金錢、勝負計算，不受輸贏影響"
+            note="每分鐘的實際表現和同類型（出裝定位 × 英雄官方主定位）、同時長帶的人比，50＝中位數；坦克、輔助和輸出位是同一把尺。不看隊友分走多少"
           />
           <SummaryCard
             title="勝率"
@@ -934,13 +1117,14 @@ function PlayerDrawerBody({
         <p className="text-sm" data-testid="crew-reading">
           {readingOf(profile)}
         </p>
+        <StyleCard style={profile.style} scored={ov.scored} />
         <div className="grid gap-4 rounded-lg border p-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
           <div>
             <div className="flex items-center justify-between gap-2">
               <div className="text-sm font-semibold">各出裝</div>
             </div>
             <div className="text-[11px] text-muted-foreground">
-              形狀是各出裝佔他場次的比例；顏色和一覽表一樣是隊內貢獻的判定，標籤下是隊內貢獻・場次。點一種出裝看他用它玩過的英雄
+              形狀是各出裝佔他場次的比例；顏色和一覽表一樣是表現分的判定，標籤下是表現分・場次。點一種出裝看他用它玩過的英雄
             </div>
             <RoleHex roles={profile.roles} total={ov.games} selected={role} onPick={(r) => pickRole(r)} />
           </div>
@@ -953,11 +1137,11 @@ function PlayerDrawerBody({
             貢獻分解{role ? `・出裝是${role}時` : "・所有出裝"}
           </div>
           <div className="text-[12px]">
-            隊內貢獻 <ContribScore dev={dev(contrib.rows[0])} className="text-base font-semibold" />
+            表現分 <ContribScore dev={dev(contrib.rows[0])} gap={PERF_GAP} className="text-base font-semibold" />
           </div>
         </div>
         <div className="mb-2 text-[11px] text-muted-foreground">
-          每一項都和「同類型」（出裝定位 × 英雄官方主定位）的人比，換成名次百分位：50＝同類型的中位數，雷達裡的虛線圈與橫條中間的刻度就是 50。
+          每一項都是每分鐘的實際數值，和「同類型」（出裝定位 × 英雄官方主定位）、同時長帶的人比，換成名次百分位：50＝同類型的中位數，雷達裡的虛線圈與橫條中間的刻度就是 50。
           依出裝定位加權：坦克重承傷、參團與控場，輸出位重輸出與存活，輔助重參團與控場；有治療或護盾隊友的場次再加「治療護盾」。
           治療與護盾隊友的量只有開始擷取賽後統計之後的場次才有
         </div>
@@ -969,10 +1153,10 @@ function PlayerDrawerBody({
           // 雷達看形狀（哪幾項突出、哪幾項是洞），橫條看每一項的確切數字與說明，兩個都留
           <div className="grid items-center gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
             <ContribRadarChart
-              data={CONTRIB_PARTS.map((c) => ({ label: c.label, hint: c.hint, value: opt(contrib.rows[0], c.key) }))}
+              data={PERF_PARTS.map((c) => ({ label: c.label, hint: c.hint, value: opt(contrib.rows[0], c.key) }))}
               height={300}
             />
-            <ContribBars row={contrib.rows[0]} />
+            <ContribBars row={contrib.rows[0]} kind="perf" />
           </div>
         )}
       </div>
@@ -998,7 +1182,7 @@ function PlayerDrawerBody({
         )}
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="text-[11px] text-muted-foreground">
-            依{sortBy === "score" ? "隊內貢獻（往他自己的平均收縮過，一兩場的不會排到最前面）" : "場次"}排；
+            依{sortBy === "score" ? "表現分（往他自己的平均收縮過，一兩場的不會排到最前面）" : "場次"}排；
             判定的區間依同時比了 {champJudged.k} 隻（{MIN_N} 場以上）放寬，所以單隻英雄很難看得出差別
           </div>
           <div className="flex items-center gap-2">
@@ -1035,7 +1219,7 @@ function PlayerDrawerBody({
               <span>英雄（點一列看每一場）</span>
               <span>場次</span>
               <span>勝率（刻度＝他自己）</span>
-              <span className="text-center">隊內貢獻（中線＝50）</span>
+              <span className="text-center">表現分（中線＝50）</span>
               <span />
               <span>判定</span>
             </div>
@@ -1278,7 +1462,7 @@ function LookupPanel({
                 >
                   {r.delta === null ? "" : `${signed(r.delta)}pp`}
                 </span>
-                <span className="text-right text-[12px]">{r.perf === null ? "" : <ContribScore dev={r.perf} />}</span>
+                <span className="text-right text-[12px]">{r.perf === null ? "" : <ContribScore dev={r.perf} gap={PERF_GAP} />}</span>
               </>
             )
             const rowClass = "slide-in grid grid-cols-[minmax(0,1fr)_3.5rem_minmax(8rem,14rem)_4.5rem_4.5rem] items-center gap-3 rounded-md px-2 py-1.5"
@@ -1322,7 +1506,7 @@ function LookupPanel({
 const CHAMPION_LOOKUP: LookupKind = {
   title: "查英雄",
   caption:
-    "選一隻英雄，看每個人玩它的戰績，點一個人展開他玩這隻英雄的每一場。「勝率」是和他自己整體勝率的差距（依場次收縮後），戰績條的刻度也是他自己的整體勝率；「貢獻」是這幾場的隊內貢獻（50＝同類型的中位數，不受輸贏影響）",
+    "選一隻英雄，看每個人玩它的戰績，點一個人展開他玩這隻英雄的每一場。「勝率」是和他自己整體勝率的差距（依場次收縮後），戰績條的刻度也是他自己的整體勝率；「貢獻」是這幾場的表現分（50＝同類型的中位數）",
   noun: "英雄",
   counter: "隻",
   verb: "玩",
@@ -1364,7 +1548,7 @@ export function Crew() {
     puuids.length ? apply({ ...query, filters: [crewFilter(puuids), ...(query.filters ?? [])] }, "all") : null
 
   const summary = useCube(
-    q({ measures: [...STAT_MEASURES, "participants.kda"], dimensions: ["participants.puuid"], limit: NO_LIMIT }),
+    q({ measures: [...STAT_MEASURES, "participants.kda", ...PERF_PARTS.map((c) => c.key)], dimensions: ["participants.puuid"], limit: NO_LIMIT }),
   )
   const roles = useCube(q({ measures: STAT_MEASURES, dimensions: ["participants.puuid", "builds.build_role"], limit: NO_LIMIT }))
   const champs = useCube(
@@ -1374,7 +1558,7 @@ export function Crew() {
   // 所以只查 games 與 wins，勝率由 LookupPanel 自己除（定義就是 100 × wins / games）
   const augments = useCube(
     q({
-      measures: ["participants.games", "participants.wins", "participants.losses", "contribution.score"],
+      measures: ["participants.games", "participants.wins", "participants.losses", "contribution.perf"],
       dimensions: ["participants.puuid", "augments.name", "augments.icon_path"],
       limit: NO_LIMIT,
     }),
@@ -1392,6 +1576,9 @@ export function Crew() {
   // 每個人的判斷一次算好：一覽表、抽屜都用同一份
   const profiles = useMemo(() => {
     const out = new Map<string, Profile>()
+    // 一般玩家（資料庫裡所有參賽者）的出裝比例，拿來對照「他比一般人多玩什麼」
+    const baseTotal = everyoneRoles.rows.reduce((a, r) => a + n0(r, "participants.games"), 0)
+    const base = new Map(everyoneRoles.rows.map((r) => [String(r["builds.build_role"]), baseTotal ? n0(r, "participants.games") / baseTotal : 0]))
     for (const p of crew) {
       const s = summary.rows.find((r) => r["participants.puuid"] === p.puuid)
       const overallStat = statOf(s, "overall", "整體")
@@ -1407,10 +1594,11 @@ export function Crew() {
         .map((r) => statOf(r, String(r["champions.name"]), String(r["champions.name"]), r["champions.icon_path"] as string))
       const roleJ = judgeAll(roleStats, own)
       const champJ = judgeAll(champStats, own)
-      out.set(p.puuid, { overall, overallWr, roles: roleJ.items, roleK: roleJ.k, champs: champJ.items, champK: champJ.k })
+      const style = playStyleOf(roleJ.items, champJ.items, s, base, overallStat.scored)
+      out.set(p.puuid, { overall, overallWr, roles: roleJ.items, roleK: roleJ.k, champs: champJ.items, champK: champJ.k, style })
     }
     return out
-  }, [crew, summary.rows, roles.rows, champs.rows])
+  }, [crew, summary.rows, roles.rows, champs.rows, everyoneRoles.rows])
 
   // 依場次排：場次多的人判斷比較可信，放前面
   const ordered = [...chosen].sort((a, b) => gamesOf(b.puuid) - gamesOf(a.puuid))
@@ -1478,7 +1666,7 @@ export function Crew() {
       {/* ── 全員一覽：每人一列，迷你雷達 + 出裝與英雄的判定 ── */}
       <Panel
         title="全員一覽"
-        caption="判定看隊內貢獻（50＝同類型的中位數，不受輸贏影響）的誤差範圍：整段高於 50 是強勢、整段低於 50 是不強勢，還在誤差內的寫偏強／偏弱（虛線框）。雷達是各出裝佔他場次的比例。前面的數字是名次，看得出的排前面；滑過看數字，點一列看完整分析"
+        caption="判定看當局表現分（50＝同類型的中位數，坦克、輔助和輸出位同一把尺）的誤差範圍：整段高於 50 是強勢、整段低於 50 是不強勢，還在誤差內的寫偏強／偏弱（虛線框）。雷達是各出裝佔他場次的比例。前面的數字是名次，看得出的排前面；滑過看數字，點一列看完整分析"
       >
         {loading ? (
           <Skeleton className="h-[640px] w-full" />
@@ -1526,7 +1714,7 @@ export function Crew() {
                   />
                   <span className="col-span-2 text-[11px] text-muted-foreground">
                     把資料庫裡每場十位參賽者都算進來：雷達是一般玩家各出裝佔多少，拿來和下面每個人的形狀對照他偏好什麼；
-                    隊內貢獻依定義是 50（同類型的中位數），勝率每場兩隊都算，必然是 50%。
+                    表現分依定義是 50（同類型的中位數），勝率每場兩隊都算，必然是 50%。
                   </span>
                 </div>
                 {ordered.map((p, i) => {
@@ -1553,13 +1741,16 @@ export function Crew() {
                           {ov.games} 場・{ownWr?.toFixed(1) ?? "—"}%・KDA {opt(sumOf(p.puuid), "participants.kda")?.toFixed(2) ?? "—"}
                         </span>
                         <span className="block text-[11px] text-muted-foreground" title={tipOf(ov, null)} data-testid="crew-overall" data-strength={ov.strength}>
-                          隊內貢獻{" "}
+                          表現分{" "}
                           <span className={cn("font-mono font-semibold", ov.g?.interval ? NUM_CLASS[ov.strength] : "text-muted-foreground")}>
                             {ov.score === null ? "—" : Math.round(ov.score)}
                           </span>
                           {ov.g?.interval && (
                             <span className={cn("ml-1 rounded border px-1 text-[10px]", STRENGTH_CLASS[ov.strength])}>{shownOf(ov.strength)}</span>
                           )}
+                        </span>
+                        <span className="block truncate text-[11px]" title={prof.style.archetypeNote ?? undefined} data-testid="crew-style-line">
+                          {styleLine(prof.style)}
                         </span>
                       </span>
                       <MiniHex data={prof.roles.map((j) => ({ label: j.label, games: j.games, strength: j.strength }))} total={ov.games} />
@@ -1578,16 +1769,17 @@ export function Crew() {
             </div>
             <HowWeJudge>
               <p>
-                隊內貢獻是同類型（出裝定位 × 英雄官方主定位）裡的名次百分位：輸出、承傷、存活、參團、控場（有治療或護盾隊友時再加治療護盾）依出裝定位加權。
-                不用擊殺、金錢、勝負計算，所以不受輸贏影響；50 是同類型的中位數。
+                當局表現分：輸出、承傷、存活、參團、控場（有治療或護盾隊友時再加治療護盾）每分鐘的實際數值，各自和同類型（出裝定位 × 英雄官方主定位）、同時長帶的人比成百分位，
+                再依出裝定位加權；50 是同類型的中位數。坦克重承傷、參團與控場，輸出位重輸出與存活，加權完再拉成同一把尺，所以坦克、輔助打得出色時和輸出位一樣高。
+                不用擊殺、金錢、勝負計算；也不看隊友分走多少（以前用的「隊內排名」是零和的，和強的朋友同隊就會被壓低）。
               </p>
               <p>
-                每一項都算誤差範圍（95%；單場的分數起伏大，標準差約 27，場次越多範圍越窄）。範圍整段高於 50 才寫「強勢」、整段低於 50 才寫「不強勢」；
-                差 {CONTRIB_GAP} 分以上但範圍還跨過 50 寫「偏強／偏弱」；其餘是「普通」（和同類型差不多）；不到 {MIN_N} 場寫「場次不夠」。同一個人同時比好幾種出裝或好幾隻英雄，範圍會再放寬——
+                每一項都算誤差範圍（95%；單場的分數起伏大，標準差約 19，場次越多範圍越窄）。範圍整段高於 50 才寫「強勢」、整段低於 50 才寫「不強勢」；
+                差 {PERF_GAP} 分以上但範圍還跨過 50 寫「偏強／偏弱」；其餘是「普通」（和同類型差不多）；不到 {MIN_N} 場寫「場次不夠」。同一個人同時比好幾種出裝或好幾隻英雄，範圍會再放寬——
                 一次比二十隻，總有一兩隻看起來特別好或特別差只是運氣。
               </p>
               <p>
-                勝率只當補充：和他自己的整體勝率比，範圍也整段在一邊寫「勝率明顯高／低」，差 15 個百分點以上但還在誤差內寫「勝率偏高／偏低」；貢獻強勢但勝率明顯低是「非戰之罪」，貢獻不強勢但勝率明顯高是「靠隊友」。
+                勝率只當補充：和他自己的整體勝率比，範圍也整段在一邊寫「勝率明顯高／低」，差 15 個百分點以上但還在誤差內寫「勝率偏高／偏低」；表現強勢但勝率明顯低是「非戰之罪」，表現不強勢但勝率明顯高是「靠隊友」。
                 好友多半一起打、勝率互相牽動，每個人的整體勝率目前都和 50% 分不出差別，所以不拿勝率判斷。
               </p>
               <p>

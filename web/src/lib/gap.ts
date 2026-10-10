@@ -80,15 +80,17 @@ export const STRENGTH_CLASS: Record<Strength, string> = {
 /** 單場隊內貢獻扣掉每個人自己的平均之後的標準差（2026-10 實測 27.2，好友 7 人、1681 場；analysis/crew_verdicts.py）。
  *  「隊內貢獻平均」的標準誤 = CONTRIB_SD ÷ √有分數的場數。 */
 export const CONTRIB_SD = 27
+/** 當局表現分（contribution.perf）同一個人單場的標準差：2026-10-10 實測（12 位 30 場以上的玩家合併）19.0 */
+export const PERF_SD = 19
 
 export type ScoreGap = { mean: number; diff: number; interval: [number, number] | null; clear: boolean }
 
 /** 隊內貢獻的平均和同類型的中位數（50）比：差幾分、95% 區間（z 可放寬，見 zFor），以及區間是否整段在 50 的同一邊。
  *  n 用「有隊內貢獻的場次」（contribution.scored_games；重開局沒有分數）。不到 MIN_N 場不給區間。 */
-export function scoreGapOf(mean: number, n: number, z = 1.96): ScoreGap {
+export function scoreGapOf(mean: number, n: number, z = 1.96, sd = CONTRIB_SD): ScoreGap {
   const diff = mean - 50
   if (n < MIN_N) return { mean, diff, interval: null, clear: false }
-  const half = (z * CONTRIB_SD) / Math.sqrt(n)
+  const half = (z * sd) / Math.sqrt(n)
   const interval: [number, number] = [diff - half, diff + half]
   return { mean, diff, interval, clear: interval[0] > 0 || interval[1] < 0 }
 }
