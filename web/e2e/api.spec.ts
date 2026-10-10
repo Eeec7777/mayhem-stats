@@ -275,7 +275,7 @@ test.describe("/api/icon", () => {
 
 test.describe("靜態檔與路由", () => {
   test("每個頁面路徑都回 SPA 的 index.html；不認得的路徑 404", async ({ request }) => {
-    for (const id of ["dashboard", "matches", "champions", "augments", "lineups", "players", "crew", "time", "tilt", "losses", "explore", "recap", "tracked"]) {
+    for (const id of ["dashboard", "matches", "champions", "augments", "lineups", "players", "crew", "time", "tilt", "losses", "explore", "recap", "tracked", "calc"]) {
       const res = await request.get(`/${id}`)
       expect(res.status(), id).toBe(200)
       expect(await res.text()).toContain('<div id="root">')

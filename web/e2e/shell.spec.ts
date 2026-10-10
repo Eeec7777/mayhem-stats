@@ -4,10 +4,10 @@ import { PAGE_LABEL, filters, header, navTo, openPage, ready, type PageId } from
 const IDS = Object.keys(PAGE_LABEL) as PageId[]
 
 test.describe("外框：側邊欄與頁面切換", () => {
-  test("側邊欄列出三組共 13 個頁面", async ({ page }) => {
+  test("側邊欄列出三組共 14 個頁面", async ({ page }) => {
     await openPage(page, "dashboard")
     const items = page.locator('[data-sidebar="menu-button"]')
-    await expect(items).toHaveCount(13)
+    await expect(items).toHaveCount(14)
     await expect(page.locator('[data-sidebar="group-label"]')).toHaveText(["總覽", "分析", "工具"])
     for (const label of Object.values(PAGE_LABEL)) await expect(items.filter({ hasText: label })).toHaveCount(1)
   })

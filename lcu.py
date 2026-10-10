@@ -170,14 +170,20 @@ _STAT_KEYS = {
 
 
 def _item_stats(description):
-    """從裝備說明的 <stats> 取出數值，例如妖夢 → {"AttackDamage": 55, "Lethality": 18, "MoveSpeed": 4}。"""
+    """從裝備說明的 <stats> 取出數值，例如妖夢 → {"AttackDamage": 55, "Lethality": 18, "MoveSpeed": 4}。
+
+    魔法穿透有兩種：法師之靴的 12 是固定值，虛空之杖的「40%」是百分比，名稱一樣，只差在有沒有 %。
+    百分比的另存成 MagicPenetrationPercent，計算機才不會把 40% 當成 40 點。物理穿透只有百分比一種，不用分。"""
     m = re.search(r"<stats>(.*?)</stats>", description or "", re.S)
     stats = {}
     for part in (m.group(1).split("<br>") if m else []):
         text = re.sub(r"<[^>]+>", "", part).strip()
-        mm = re.match(r"([\d.]+)%?\s*(.+)", text)
-        if mm and mm.group(2).strip() in _STAT_KEYS:
-            stats[_STAT_KEYS[mm.group(2).strip()]] = float(mm.group(1))
+        mm = re.match(r"([\d.]+)(%?)\s*(.+)", text)
+        if mm and mm.group(3).strip() in _STAT_KEYS:
+            key = _STAT_KEYS[mm.group(3).strip()]
+            if key == "MagicPenetration" and mm.group(2):
+                key = "MagicPenetrationPercent"
+            stats[key] = float(mm.group(1))
     return stats
 
 
@@ -221,4 +227,81 @@ def fetch_dimensions(client):
         "dim_items": items,
         "dim_perks": perks,
         "dim_spells": spells,
+    }
+
+
+# ---------------------------------------------------------------- 遊戲中的即時資料
+
+# 遊戲程式本身（不是客戶端）在對局中開的唯讀介面，固定 2999 埠、自簽憑證、不用密碼。只有對局進行中才連得上。
+LIVE_CLIENT_URL = "https://127.0.0.1:2999/liveclientdata/allgamedata"
+
+# 即時資料 championStats 的鍵 → 計算機用的鍵。百分比類（穿透%、暴擊率）即時資料給的是 0～1 或 0～100 不一，
+# 這裡統一成「百分比數字」（35 表示 35%）。
+_LIVE_STATS = {
+    "attackDamage": "ad", "abilityPower": "ap", "attackSpeed": "attackSpeed",
+    "critChance": "critChance", "critDamage": "critDamage",
+    "physicalLethality": "lethality", "armorPenetrationPercent": "armorPenPct",
+    "magicPenetrationFlat": "magicPen", "magicPenetrationPercent": "magicPenPct",
+    "abilityHaste": "haste", "maxHealth": "hp", "armor": "armor", "magicResist": "mr",
+}
+
+
+def _champion_alias(player):
+    # rawChampionName 長這樣：game_character_displayname_MonkeyKing；取最後一段就是 dim_champions.alias
+    raw = player.get("rawChampionName") or ""
+    return raw.rsplit("_", 1)[-1] if raw.startswith("game_character_displayname_") else None
+
+
+def live_game(timeout=2):
+    """對局中的即時資料，整理成計算機要的樣子；不在對局中回 None。
+
+    只回英雄、等級、裝備與自己的面板，不回任何玩家名稱（計算機用不到，也不該經過這裡外流）。"""
+    try:
+        res = requests.get(LIVE_CLIENT_URL, verify=False, timeout=timeout)
+        res.raise_for_status()
+        data = res.json()
+    except (requests.RequestException, ValueError):
+        return None
+    return parse_live_game(data)
+
+
+def parse_live_game(data):
+    active = data.get("activePlayer") or {}
+    players = data.get("allPlayers") or []
+    if not active or not players:
+        return None
+    me_name = active.get("riotId") or active.get("summonerName")
+    me = next((p for p in players if me_name and me_name in (p.get("riotId"), p.get("summonerName"))), None)
+    my_team = (me or {}).get("team")
+    raw = active.get("championStats") or {}
+    stats = {}
+    for src, dst in _LIVE_STATS.items():
+        if isinstance(raw.get(src), (int, float)):
+            stats[dst] = float(raw[src])
+    # 穿透% 即時資料給的是「剩下幾成」（0.65 表示無視 35%），暴擊率是 0～1，暴擊傷害是 1.75 這種倍率
+    if "armorPenPct" in stats:
+        stats["armorPenPct"] = round((1 - stats["armorPenPct"]) * 100, 2) if stats["armorPenPct"] <= 1 else 0.0
+    if "magicPenPct" in stats:
+        stats["magicPenPct"] = round((1 - stats["magicPenPct"]) * 100, 2) if stats["magicPenPct"] <= 1 else 0.0
+    if "critChance" in stats and stats["critChance"] <= 1:
+        stats["critChance"] = round(stats["critChance"] * 100, 2)
+    if "critDamage" in stats and stats["critDamage"] > 10:
+        stats["critDamage"] = round(stats["critDamage"] / 100, 4)  # 有的版本給 175 而不是 1.75
+
+    def player(p):
+        return {
+            "champion": _champion_alias(p),
+            "championName": p.get("championName"),
+            "level": p.get("level"),
+            "isMe": p is me,
+            "ally": my_team is not None and p.get("team") == my_team,
+            "items": [i["itemID"] for i in (p.get("items") or []) if isinstance(i.get("itemID"), int)],
+        }
+
+    return {
+        "level": active.get("level"),
+        "gold": active.get("currentGold"),
+        "gameTime": (data.get("gameData") or {}).get("gameTime"),
+        "stats": stats,
+        "players": [player(p) for p in players],
     }

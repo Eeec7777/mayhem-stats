@@ -2,13 +2,13 @@ import { expect, type Locator, type Page } from "@playwright/test"
 
 export type PageId =
   | "dashboard" | "matches" | "champions" | "augments" | "lineups" | "players" | "crew"
-  | "time" | "tilt" | "losses" | "explore" | "tracked" | "recap"
+  | "time" | "tilt" | "losses" | "explore" | "tracked" | "recap" | "calc"
 
 /** 側邊欄的頁名，和 AppShell 的 NAV 一致。 */
 export const PAGE_LABEL: Record<PageId, string> = {
   dashboard: "儀表板", matches: "對局紀錄", champions: "英雄", augments: "增幅裝置", lineups: "陣容",
   players: "隊友 / 對手", crew: "好友比較", time: "時段", tilt: "節奏與連敗", losses: "敗因分析",
-  explore: "自由探索", recap: "賽季回顧", tracked: "追蹤對象",
+  explore: "自由探索", recap: "賽季回顧", tracked: "追蹤對象", calc: "出裝計算機",
 }
 
 /** 頁面內容區。外層的 SidebarInset 也是 <main>，所以要指到內層那個。 */

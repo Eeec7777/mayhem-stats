@@ -40,6 +40,7 @@ import cube_process
 import db
 import features
 import icons
+import lcu
 
 BASE_DIR = Path(__file__).parent
 collector = collector_module.Collector()
@@ -759,7 +760,7 @@ def index():
 @app.get("/{page}")
 def page_index(page: str):
     if page not in {"dashboard", "matches", "champions", "augments", "lineups", "players", "crew",
-                    "time", "tilt", "losses", "explore", "recap", "tracked"}:
+                    "time", "tilt", "losses", "explore", "recap", "tracked", "calc"}:
         return Response(status_code=404)
     return index()
 
@@ -767,6 +768,58 @@ def page_index(page: str):
 @app.get("/api/status")
 def status():
     return {**collector.snapshot(), "iconCache": icons.stats(), "public": PUBLIC}
+
+
+@app.get("/api/calc/catalog")
+def calc_catalog():
+    """出裝計算機的候選裝備：大亂鬥裡實際有人買過（≥5 次）、有價格的裝備，附上數值與購買次數；
+    另附增幅的名稱與圖示（計算機只用其中有寫規則的幾個）。
+
+    用「有人買過」當作這個模式買得到的依據：裝備資料本身沒有標哪張地圖能買。"""
+    conn = db.connect()
+    try:
+        rows = conn.execute(
+            """SELECT i.id, i.name, i.icon_path, i.price_total, COUNT(*) AS buys
+                 FROM participant_items pi
+                 JOIN matches m USING (platform_id, game_id)
+                 JOIN dim_items i ON i.id = pi.item_id
+                WHERE m.queue_id = ? AND i.price_total > 0
+                  -- 20 萬以上的編號是增幅給的道具（究極九頭蛇、烏莉特的法帽、黃金鍋鏟…），商店買不到
+                  AND i.id < 200000
+                GROUP BY i.id
+               HAVING buys >= 5""",
+            (lcu.MAYHEM_QUEUE_ID,),
+        ).fetchall()
+        stats = {}
+        for r in conn.execute("SELECT item_id, stat, value FROM dim_item_stats"):
+            stats.setdefault(r["item_id"], {})[r["stat"]] = r["value"]
+        boots = {r[0] for r in conn.execute("SELECT item_id FROM dim_item_categories WHERE category = 'Boots'")}
+        augments = [dict(r) for r in conn.execute("SELECT id, name, icon_path AS icon FROM dim_augments")]
+    finally:
+        conn.close()
+    items = [
+        {"id": r["id"], "name": r["name"], "icon": r["icon_path"], "price": r["price_total"],
+         "buys": r["buys"], "boots": r["id"] in boots, "stats": stats.get(r["id"], {})}
+        for r in rows
+    ]
+    return {"items": items, "augments": augments}
+
+
+@app.get("/api/calc/live")
+async def calc_live():
+    """對局中的即時面板（遊戲本身的 2999 埠）。只在本機有意義：公開鏡像連到的會是站長正在打的那場，所以關掉。"""
+    if PUBLIC:
+        return readonly_error()
+    game = await asyncio.to_thread(lcu.live_game)
+    if game:
+        conn = db.connect()
+        try:
+            icons_by_alias = {r["alias"]: r["icon_path"] for r in conn.execute("SELECT alias, icon_path FROM dim_champions")}
+        finally:
+            conn.close()
+        for p in game["players"]:
+            p["icon"] = icons_by_alias.get(p["champion"])
+    return {"inGame": game is not None, **(game or {})}
 
 
 @app.get("/api/events")
