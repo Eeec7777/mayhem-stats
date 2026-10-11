@@ -1663,13 +1663,11 @@ const STAT_MEASURES_ALL = ["participants.games", "participants.time_dead_games",
 function StatsPanel({
   people,
   rows,
-  dmgRows,
   loading,
   profiles,
 }: {
   people: Player[]
   rows: CubeRow[]
-  dmgRows: CubeRow[]
   loading: boolean
   profiles: Map<string, Profile>
 }) {
@@ -1679,24 +1677,12 @@ function StatsPanel({
   const [sortKey, setSortKey] = useState<string>("participants.avg_damage")
   const isMix = setId === "mix"
   const set = STAT_SETS.find((g) => g.id === setId)
-  // 出裝比例那組：六種出裝各占幾成＋AD／AP
-  const mixCols: StatCol[] = [
-    ...BUILD_ROLES.map((r) => ({ key: `mix:${r}`, label: r, fmt: (v: number) => `${Math.round(v * 100)}%`, hint: `出裝是${r}的場次比例` })),
-    { key: "mix:AD", label: "AD 裝", fmt: (v: number) => `${Math.round(v * 100)}%`, hint: "出裝的傷害類型是 AD 的比例（坦克、輔助這種兩種傷害裝都沒買的不算）" },
-  ]
+  // 出裝比例那組：六種出裝各占幾成（AD／AP 寫在玩家類型裡，這裡不另列）
+  const mixCols: StatCol[] = BUILD_ROLES.map((r) => ({ key: `mix:${r}`, label: r, fmt: (v: number) => `${Math.round(v * 100)}%`, hint: `出裝是${r}的場次比例` }))
   const cols = isMix ? mixCols : (set?.cols ?? [])
   const rowOf = (puuid: string) => rows.find((r) => r["participants.puuid"] === puuid)
   const valueOf = (puuid: string, key: string): number | null => {
-    if (key.startsWith("mix:")) {
-      const k = key.slice(4)
-      if (k === "AD") {
-        const mine = dmgRows.filter((r) => r["participants.puuid"] === puuid)
-        const ad = n0(mine.find((r) => r["builds.damage_type"] === "AD"), "participants.games")
-        const ap = n0(mine.find((r) => r["builds.damage_type"] === "AP"), "participants.games")
-        return ad + ap ? ad / (ad + ap) : null
-      }
-      return profiles.get(puuid)?.style.mix.find((m) => m.label === k)?.share ?? 0
-    }
+    if (key.startsWith("mix:")) return profiles.get(puuid)?.style.mix.find((m) => m.label === key.slice(4))?.share ?? 0
     return opt(rowOf(puuid), key)
   }
   const activeSort = cols.some((c) => c.key === sortKey) ? sortKey : cols[0]?.key
@@ -1732,7 +1718,7 @@ function StatsPanel({
             <ToggleGroupItem value="mix">出裝比例</ToggleGroupItem>
           </ToggleGroup>
           <p className="text-[11px] text-muted-foreground">
-            {isMix ? "六種出裝各占他場次的幾成，以及出 AD 裝的比例（其餘是 AP）。不是好壞，是拿來對照其他數字的" : set?.caption}
+            {isMix ? "六種出裝各占他場次的幾成。不是好壞，是拿來對照其他數字的；點數字看那種出裝的每一場" : set?.caption}
           </p>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[860px] text-sm" data-testid="crew-stats">
@@ -1812,9 +1798,7 @@ function StatsPanel({
               </div>
               <p className="text-[11px] text-muted-foreground">
                 {drill.key.startsWith("mix:")
-                  ? drill.key === "mix:AD"
-                    ? "出裝傷害類型是 AD 的場次"
-                    : `出裝是${drill.key.slice(4)}的場次`
+                  ? `出裝是${drill.key.slice(4)}的場次`
                   : drill.key.includes("time_dead")
                     ? "這一欄只算有賽後統計的場次；下面列出範圍內全部的場次，舊場次沒有死亡時間"
                     : "這一欄是下面這些場次的平均"}
@@ -1822,13 +1806,7 @@ function StatsPanel({
               <PlayerMatches
                 key={`${drill.puuid}|${drill.key}`}
                 puuid={drill.puuid}
-                filters={
-                  drill.key === "mix:AD"
-                    ? [{ member: "builds.damage_type", operator: "equals", values: ["AD"] }]
-                    : drill.key.startsWith("mix:")
-                      ? [{ member: "builds.build_role", operator: "equals", values: [drill.key.slice(4)] }]
-                      : []
-                }
+                filters={drill.key.startsWith("mix:") ? [{ member: "builds.build_role", operator: "equals", values: [drill.key.slice(4)] }] : []}
               />
             </div>
           )}
@@ -2108,7 +2086,7 @@ export function Crew() {
         )}
       </Panel>
 
-      <StatsPanel people={ordered} rows={stats.rows} dmgRows={dmgTypes.rows} loading={loading || stats.loading || dmgTypes.loading} profiles={profiles} />
+      <StatsPanel people={ordered} rows={stats.rows} loading={loading || stats.loading} profiles={profiles} />
 
       {/* ── 查英雄、查增幅裝置：選一個，看每個人用它的勝率與貢獻 ── */}
       {/* 兩個面板一樣的結構，寬螢幕（1900px 以上，展開的對局卡片才放得進半版）左右並排，其餘上下疊 */}
