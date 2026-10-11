@@ -138,7 +138,7 @@ test.describe("陣容頁：這種陣容下出什麼裝", () => {
     for (const [i, b] of ["0 個", "1 個", "2 個以上"].entries()) {
       const col = cols.nth(i)
       await expect(col).toContainText(`隊友前排 ${b}`)
-      for (const role of ["坦克", "AD 鬥士", "AD 刺客", "AD 輸出", "AP 輸出", "AP 刺客", "AP 鬥士", "輔助"]) {
+      for (const role of ["坦克", "AD 鬥士", "AD 近戰", "AD 刺客", "射手", "AP 輸出", "AP 刺客", "AP 鬥士", "輔助"]) {
         await expectRow(gapRow(col, role), cells.get(`${b}|${role}`), `隊友前排 ${b}・${role}`)
       }
     }
@@ -278,7 +278,7 @@ function allTeams() {
   const rows = sql(
     `SELECT p.platform_id, p.game_id, p.team_id, MAX(p.win) AS win,
             SUM(b.build_role = '坦克' OR b.build_role LIKE '%鬥士') AS front,
-            SUM(b.build_role IN ('AD 輸出', 'AD 刺客', 'AP 輸出', 'AP 刺客')) AS carry
+            SUM(b.build_role IN ('射手', 'AD 近戰', 'AD 刺客', 'AP 輸出', 'AP 刺客')) AS carry
        FROM match_participants p JOIN matches m USING (platform_id, game_id) JOIN mat_builds b ON b.participant_rowid = p.rowid
       WHERE m.queue_id = 2400 GROUP BY p.platform_id, p.game_id, p.team_id`,
   )

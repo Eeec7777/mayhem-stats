@@ -74,6 +74,9 @@ export type Player = MatchRow & {
   largest_multi_kill: number
   longest_time_living: number
   dmg_to_objectives: number
+  total_damage: number
+  turret_kills: number
+  inhibitor_kills: number | null
   first_blood: number
   first_tower: number
   double_kills: number
@@ -340,6 +343,15 @@ const STAT_SECTIONS: { title: string; rows: StatRow[] }[] = [
       { label: "對英雄魔法傷害", get: (p) => p.dmg_magic, fmt: (n) => n.toLocaleString() },
       { label: "對英雄真實傷害", get: (p) => p.dmg_true, fmt: (n) => n.toLocaleString() },
       { label: "對建築物傷害", get: (p) => p.dmg_to_objectives, fmt: (n) => n.toLocaleString() },
+      // 對局資料沒有對小兵傷害，用總輸出扣掉對英雄與對建築估計（大亂鬥沒有野怪）
+      { label: "對小兵傷害（估）", get: (p) => p.total_damage - p.dmg_to_champions - (p.dmg_to_objectives ?? 0), fmt: (n) => n.toLocaleString() },
+    ],
+  },
+  {
+    title: "推進",
+    rows: [
+      { label: "摧毀防禦塔", get: (p) => p.turret_kills },
+      { label: "摧毀兵營", get: (p) => p.inhibitor_kills ?? 0 },
     ],
   },
   {

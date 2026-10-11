@@ -11,7 +11,7 @@ cubes:
   # 「我方」開頭的維度（team_*）則含自己：問的是「這一隊整體是什麼陣容」，和敵方五人對稱，
   # 陣容頁的對陣矩陣用它們。一隊五人的陣容相同，所以每個人查到的都一樣。
   #
-  # 輸出組成看出裝定位，不看實際傷害：AD 鬥士／AD 輸出／AD 刺客算物理，AP 鬥士／AP 輸出／AP 刺客算魔法，
+  # 輸出組成看出裝定位，不看實際傷害：AD 鬥士／射手／AD 近戰／AD 刺客算物理，AP 鬥士／AP 輸出／AP 刺客算魔法，
   # 坦克、輔助、未成形不算。物理比魔法多 2 人以上是「物理為主」，反過來「魔法為主」，其餘「混合」。
   # 不用 enemy_damage_type 那種實際傷害比例，是因為那是打完的結果（贏的一方傷害本來就多），
   # 陣容應該是「開打前就看得到」的東西；出裝定位雖然也是終場裝備，至少不受傷害量影響。
@@ -34,10 +34,17 @@ cubes:
           WITH p AS (
             SELECT mp.rowid AS participant_rowid, mp.platform_id, mp.game_id, mp.team_id,
               CASE WHEN b.build_role IN ('坦克', 'AD 鬥士', 'AP 鬥士') THEN 1 ELSE 0 END AS front,
-              CASE WHEN b.build_role IN ('AD 鬥士', 'AD 輸出', 'AD 刺客') THEN 1 ELSE 0 END AS ad,
+              CASE WHEN b.build_role IN ('AD 鬥士', '射手', 'AD 近戰', 'AD 刺客') THEN 1 ELSE 0 END AS ad,
               CASE WHEN b.build_role IN ('AP 鬥士', 'AP 輸出', 'AP 刺客') THEN 1 ELSE 0 END AS ap,
               CASE WHEN b.build_role = '輔助' THEN 1 ELSE 0 END AS sup,
-              CASE WHEN b.build_role IN ('AD 輸出', 'AD 刺客', 'AP 輸出', 'AP 刺客') THEN 1 ELSE 0 END AS carry,
+              CASE WHEN b.build_role IN ('射手', 'AD 近戰', 'AD 刺客', 'AP 輸出', 'AP 刺客') THEN 1 ELSE 0 END AS carry,
+              CASE WHEN b.build_role IN ('坦克') THEN 1 ELSE 0 END AS c0,
+              CASE WHEN b.build_role IN ('AD 鬥士', 'AP 鬥士') THEN 1 ELSE 0 END AS c1,
+              CASE WHEN b.build_role IN ('AD 近戰', 'AD 刺客', 'AP 刺客') THEN 1 ELSE 0 END AS c2,
+              CASE WHEN b.build_role IN ('射手') THEN 1 ELSE 0 END AS c3,
+              CASE WHEN b.build_role IN ('AP 輸出') THEN 1 ELSE 0 END AS c4,
+              CASE WHEN b.build_role IN ('輔助') THEN 1 ELSE 0 END AS c5,
+              CASE WHEN b.build_role IN ('未成形') THEN 1 ELSE 0 END AS c6,
               COALESCE(mp.dmg_magic, 0) AS magic,
               COALESCE(mp.dmg_physical, 0) + COALESCE(mp.dmg_magic, 0) + COALESCE(mp.dmg_true, 0) AS total
             FROM match_participants mp
@@ -55,6 +62,20 @@ cubes:
               SUM(sup) OVER (PARTITION BY platform_id, game_id) AS game_sup,
               SUM(carry) OVER (PARTITION BY platform_id, game_id, team_id) AS team_carry,
               SUM(carry) OVER (PARTITION BY platform_id, game_id) AS game_carry,
+              SUM(c0) OVER (PARTITION BY platform_id, game_id, team_id) AS t0,
+              SUM(c0) OVER (PARTITION BY platform_id, game_id) AS g0,
+              SUM(c1) OVER (PARTITION BY platform_id, game_id, team_id) AS t1,
+              SUM(c1) OVER (PARTITION BY platform_id, game_id) AS g1,
+              SUM(c2) OVER (PARTITION BY platform_id, game_id, team_id) AS t2,
+              SUM(c2) OVER (PARTITION BY platform_id, game_id) AS g2,
+              SUM(c3) OVER (PARTITION BY platform_id, game_id, team_id) AS t3,
+              SUM(c3) OVER (PARTITION BY platform_id, game_id) AS g3,
+              SUM(c4) OVER (PARTITION BY platform_id, game_id, team_id) AS t4,
+              SUM(c4) OVER (PARTITION BY platform_id, game_id) AS g4,
+              SUM(c5) OVER (PARTITION BY platform_id, game_id, team_id) AS t5,
+              SUM(c5) OVER (PARTITION BY platform_id, game_id) AS g5,
+              SUM(c6) OVER (PARTITION BY platform_id, game_id, team_id) AS t6,
+              SUM(c6) OVER (PARTITION BY platform_id, game_id) AS g6,
               SUM(magic) OVER (PARTITION BY platform_id, game_id, team_id) AS team_magic,
               SUM(total) OVER (PARTITION BY platform_id, game_id, team_id) AS team_total,
               SUM(magic) OVER (PARTITION BY platform_id, game_id) AS game_magic,
@@ -70,7 +91,10 @@ cubes:
             team_ad, game_ad - team_ad AS enemy_ad,
             team_ap, game_ap - team_ap AS enemy_ap,
             team_sup, game_sup - team_sup AS enemy_sup,
-            team_carry, game_carry - team_carry AS enemy_carry
+            team_carry, game_carry - team_carry AS enemy_carry,
+            -- 五人組成：每人歸一個粗分類，依固定順序排成字串（例如「坦鬥切射法」），見下面 team_lineup 的說明
+            substr('坦坦坦坦坦', 1, t0) || substr('鬥鬥鬥鬥鬥', 1, t1) || substr('切切切切切', 1, t2) || substr('射射射射射', 1, t3) || substr('法法法法法', 1, t4) || substr('輔輔輔輔輔', 1, t5) || substr('未未未未未', 1, t6) AS team_lineup,
+            substr('坦坦坦坦坦', 1, g0 - t0) || substr('鬥鬥鬥鬥鬥', 1, g1 - t1) || substr('切切切切切', 1, g2 - t2) || substr('射射射射射', 1, g3 - t3) || substr('法法法法法', 1, g4 - t4) || substr('輔輔輔輔輔', 1, g5 - t5) || substr('未未未未未', 1, g6 - t6) AS enemy_lineup
           FROM sums
 
     # 與 participants.yml 相同的 refresh key，理由寫在那裡。SQL 必須一字不差才會被合併。
@@ -144,7 +168,7 @@ cubes:
 
       - name: team_damage_mix
         title: 我方輸出組成
-        description: "我方五人（含自己）的出裝定位裡物理（AD 鬥士、AD 輸出、AD 刺客）與魔法（AP 鬥士、AP 輸出、AP 刺客）的人數差：物理多 2 人以上為「物理為主」，魔法多 2 人以上為「魔法為主」，其餘「混合」。"
+        description: "我方五人（含自己）的出裝定位裡物理（AD 鬥士、射手、AD 近戰、AD 刺客）與魔法（AP 鬥士、AP 輸出、AP 刺客）的人數差：物理多 2 人以上為「物理為主」，魔法多 2 人以上為「魔法為主」，其餘「混合」。"
         sql: "CASE WHEN team_ad - team_ap >= 2 THEN '物理為主' WHEN team_ap - team_ad >= 2 THEN '魔法為主' ELSE '混合' END"
         type: string
         meta:
@@ -175,7 +199,7 @@ cubes:
           group: 陣容
 
       # ── 陣容原型：坦克多、輸出不夠的隊伍是不是比較弱 ──
-      # 「輸出核心」＝出裝是 AD 輸出、AD 刺客、AP 輸出、AP 刺客的人（鬥士不算：他們有前排也有輸出，歸前排）。
+      # 「輸出核心」＝出裝是射手、AD 近戰、AD 刺客、AP 輸出、AP 刺客的人（鬥士不算：他們有前排也有輸出，歸前排）。
       # 前排 3 個以上時剩下最多 2 個位置，輸出核心必然 ≤2，所以「前排重」本身就是「坦克多、輸出少」。
       # 三種互斥：前排重（前排 ≥3）→ 輸出多（輸出核心 ≥4，前排必然 ≤1）→ 其餘「均衡」。
       # 界線看資料（2026-10-09，全資料庫 1106 隊）：前排重 156 隊勝率 42%、均衡 458 隊 54%、輸出多 492 隊 49%；
@@ -184,7 +208,7 @@ cubes:
       # 不用實際打出的傷害（那是打完的結果）；方法與數字見 docs/lineup-winrate.md。
       - name: team_archetype
         title: 我方陣容原型
-        description: "我方五人（含自己）依出裝定位分三種：「前排重」＝坦克、AD 鬥士、AP 鬥士合計 3 個以上（輸出核心必然 ≤2，坦克多輸出少）；「輸出多」＝輸出核心（AD／AP 輸出與刺客）4 個以上；其餘「均衡」。"
+        description: "我方五人（含自己）依出裝定位分三種：「前排重」＝坦克、AD 鬥士、AP 鬥士合計 3 個以上（輸出核心必然 ≤2，坦克多輸出少）；「輸出多」＝輸出核心（射手、AD 近戰、AP 輸出與刺客）4 個以上；其餘「均衡」。"
         sql: "CASE WHEN team_front >= 3 THEN '前排重' WHEN team_carry >= 4 THEN '輸出多' ELSE '均衡' END"
         type: string
         meta:
@@ -194,6 +218,27 @@ cubes:
         title: 敵方陣容原型
         description: "敵方五人依出裝定位分三種，分組同我方陣容原型：前排重／輸出多／均衡。"
         sql: "CASE WHEN enemy_front >= 3 THEN '前排重' WHEN enemy_carry >= 4 THEN '輸出多' ELSE '均衡' END"
+        type: string
+        meta:
+          group: 陣容
+
+      # ── 五人組成：五個人分別是什麼 ──
+      # 每人依出裝定位歸一個粗分類，依固定順序排成五個字：坦（坦克）鬥（AD／AP 鬥士）切（近身切入：AD 近戰、AD／AP 刺客）
+      # 射（射手）法（AP 輸出）輔（輔助）未（未成形）。例如「坦鬥切射法」。
+      # 為什麼要粗分：照九種出裝定位排列組合，1,182 隊分散成 252 種，最多的一種才 38 隊（95% 區間 ±16pp），什麼都看不出；
+      # 近戰與刺客都是要貼身切入的輸出，合在一起後最常見的 5 種各有 38～56 隊。2026-10-11 實測。
+      - name: team_lineup
+        title: 我方五人組成
+        description: "我方五人（含自己）的出裝依粗分類排成五個字：坦＝坦克、鬥＝AD／AP 鬥士、切＝近身切入（AD 近戰、AD／AP 刺客）、射＝射手、法＝AP 輸出、輔＝輔助、未＝未成形（太早結束沒成裝）。順序固定，例如「坦鬥切射法」。"
+        sql: team_lineup
+        type: string
+        meta:
+          group: 陣容
+
+      - name: enemy_lineup
+        title: 敵方五人組成
+        description: "敵方五人的出裝依粗分類排成五個字，分類與順序同我方五人組成。"
+        sql: enemy_lineup
         type: string
         meta:
           group: 陣容

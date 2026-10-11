@@ -335,7 +335,7 @@ function Archetypes({ who, scope }: { who: Who; scope: WhoScope }) {
   return (
     <Panel
       title="陣容強弱：哪些陣容強勢、哪些不強勢"
-      caption="先用常理把一隊分成三種原型，再看資料同不同意。判定看「所有隊伍」（每場兩隊都算，資料量最大）；「你們」是目前『看誰』的範圍。區間整段在 50% 同一邊才寫強勢／不強勢，差 3 個百分點以上但還分不出的寫偏強／偏弱"
+      caption="先用常理把一隊分成三種原型，再看資料同不同意。判定看「所有隊伍」（每場兩隊都算，資料量最大）；「你們」是目前『看誰』的範圍。區間整段在 50% 同一邊才寫強勢／不強勢，差 3 個百分點以上但還分不出的寫偏強／偏弱，差不到 3 個百分點的寫普通（和平均差不多，不是場次不夠）"
     >
       {loading ? (
         <Skeleton className="h-[260px] w-full" />
@@ -382,7 +382,7 @@ function Archetypes({ who, scope }: { who: Who; scope: WhoScope }) {
                   {cell(row, base, "隊")}
                   {showMine && <div className="hidden lg:block">{cell(mineRows[i], mineBase, "隊")}</div>}
                   <span className="text-right">
-                    <span className={cn("rounded border px-1.5 py-0.5 text-[11px]", VERDICT_CLASS[verdict])}>{verdict}</span>
+                    <span className={cn("rounded border px-1.5 py-0.5 text-[11px]", VERDICT_CLASS[verdict])}>{verdictText(g, verdict)}</span>
                   </span>
                 </div>
               )
@@ -403,6 +403,172 @@ function Archetypes({ who, scope }: { who: Who; scope: WhoScope }) {
               原型只看出裝定位，不看打出多少傷害（那是結果）。「所有隊伍」的勝率合起來必然是 50%（一場一勝一敗）；
               只有一邊的場次樣本小時，「你們」那欄會很寬，別硬讀。方法與數字見 docs/lineup-winrate.md。
             </p>
+          </div>
+        </div>
+      )}
+    </Panel>
+  )
+}
+
+/** 判定的字：有區間但和基準差不多是「普通」（「看不出」會被讀成場次不夠），沒有區間才是「樣本太少」 */
+const verdictText = (g: { interval: [number, number] | null }, v: string) => (g.interval === null ? "樣本太少" : v === "看不出" ? "普通" : v)
+
+/** 五人組成的粗分類，順序同語意層 comp_context.team_lineup 的字串（坦鬥切射法輔未） */
+const LINEUP_CLASSES = [
+  { ch: "坦", label: "坦克", hint: "出裝是坦克", tone: "border-role-util/70" },
+  { ch: "鬥", label: "鬥士", hint: "AD 鬥士或 AP 鬥士（坦度裝約一半、傷害裝約一半）", tone: "border-muted-foreground/60" },
+  { ch: "切", label: "近戰／刺客", hint: "AD 近戰（近戰英雄出 AD 輸出裝）、AD 刺客、AP 刺客：要貼身切入的輸出", tone: "border-dashed border-muted-foreground/70" },
+  { ch: "射", label: "射手", hint: "AD 輸出裝、英雄有官方射手定位", tone: "border-role-ad/70" },
+  { ch: "法", label: "法師", hint: "AP 輸出裝（不是刺客）", tone: "border-role-ap/70" },
+  { ch: "輔", label: "輔助", hint: "出輔助裝", tone: "border-role-util/70" },
+  { ch: "未", label: "未成形", hint: "太早結束、沒有成裝", tone: "border-muted-foreground/40" },
+] as const
+/** 組合列至少要幾隊才列出來（所有隊伍）；更少的區間寬到 ±20pp 以上，列了也只是雜訊 */
+const LINEUP_MIN = 20
+
+function LineupChips({ lineup }: { lineup: string }) {
+  return (
+    <span className="flex flex-wrap gap-1">
+      {[...lineup].map((ch, i) => {
+        const c = LINEUP_CLASSES.find((x) => x.ch === ch)
+        return (
+          <span key={i} title={c?.hint} className={cn("rounded border px-1 py-px text-[11px] leading-tight", c?.tone ?? "border-border")}>
+            {c?.label ?? ch}
+          </span>
+        )
+      })}
+    </span>
+  )
+}
+
+/** 五個人分別是什麼：一張是「每種位置有幾個」（樣本大），一張是常見的完整五人組合（樣本小，多半分不出來） */
+function LineupFive({ who, scope }: { who: Who; scope: WhoScope }) {
+  const allScope = useWhoScope("all")
+  const dim = "comp_context.team_lineup"
+  const all = useCube(allScope.q({ measures: [GAMES, WINS], dimensions: [dim], limit: NO_LIMIT }))
+  const mine = useCube(who === "all" ? null : scope.q({ measures: [GAMES, WINS], dimensions: [dim], limit: NO_LIMIT }))
+  const showMine = who !== "all"
+  const [view, setView] = useState<"count" | "combo">("count")
+
+  const sumOf = (rows: CubeRow[]) => {
+    const games = rows.reduce((a, r) => a + n0(r, GAMES), 0)
+    return { games, base: games ? (100 * rows.reduce((a, r) => a + n0(r, WINS), 0)) / games : 50 }
+  }
+  const A = sumOf(all.rows)
+  const M = sumOf(mine.rows)
+
+  // 每種位置有幾個：從五人組成的字串數出那個字出現幾次，再加總
+  const bucketsOf = (ch: string) => (ch === "輔" || ch === "未" ? ["0", "1+"] : ["0", "1", "2", "3+"])
+  const bucketOf = (ch: string, n: number) => (ch === "輔" || ch === "未" ? (n ? "1+" : "0") : n >= 3 ? "3+" : String(n))
+  const countRows = (rows: CubeRow[]) =>
+    LINEUP_CLASSES.filter((c) => c.ch !== "未").flatMap((c) =>
+      bucketsOf(c.ch).map((b) => {
+        const hit = rows.filter((r) => bucketOf(c.ch, [...String(r[dim] ?? "")].filter((x) => x === c.ch).length) === b)
+        return { key: `${c.ch}|${b}`, label: `${c.label} ${b === "1+" ? "有" : b === "0" && (c.ch === "輔") ? "沒有" : `${b} 個`}`, games: hit.reduce((a, r) => a + n0(r, GAMES), 0), wins: hit.reduce((a, r) => a + n0(r, WINS), 0) }
+      }),
+    )
+  const comboRows = (rows: CubeRow[]) =>
+    rows.map((r) => ({ key: String(r[dim]), label: String(r[dim]), games: n0(r, GAMES), wins: n0(r, WINS) }))
+
+  const allCount = countRows(all.rows)
+  const mineCount = countRows(mine.rows)
+  const allCombo = comboRows(all.rows)
+    .filter((r) => r.games >= LINEUP_MIN)
+    .sort((a, b) => b.games - a.games)
+  const mineCombo = new Map(comboRows(mine.rows).map((r) => [r.key, r]))
+  const shown = view === "count" ? allCount : allCombo
+  // 一次比了畫面上這麼多列，區間就依列數放寬（組合只列出 LINEUP_MIN 隊以上的，但「從所有組合裡挑出這幾種」本身也是比較，所以照列出的列數算）
+  const z = zFor(shown.length || 1)
+  const mineOf = (r: GapRow): GapRow =>
+    view === "count" ? (mineCount.find((x) => x.key === r.key) ?? { ...r, games: 0, wins: 0 }) : (mineCombo.get(r.key) ?? { ...r, games: 0, wins: 0 })
+  const reach = Math.max(reachOf(shown, A.base, z), showMine ? reachOf(shown.map(mineOf), M.base, z) : 0)
+  const grid = showMine
+    ? "grid-cols-[minmax(0,9rem)_minmax(6rem,1fr)_4.5rem] lg:grid-cols-[18rem_minmax(10rem,1fr)_minmax(10rem,1fr)_5rem] lg:gap-x-8"
+    : "grid-cols-[minmax(0,9rem)_minmax(6rem,1fr)_4.5rem] lg:grid-cols-[18rem_minmax(10rem,1fr)_5rem]"
+
+  const cell = (row: GapRow, baseline: number, unit: string) => {
+    const g = gapOf(row, baseline, z)
+    return (
+      <div>
+        <ForestTrack diff={g.interval ? g.diff : null} interval={g.interval} clear={g.clear} reach={reach} empty={row.games ? "樣本太少" : "沒有"} />
+        <div className="-mt-1 text-center font-mono text-[11px] tabular-nums text-muted-foreground">
+          <b className={cn("text-xs", g.clear ? (g.diff > 0 ? "text-win" : "text-loss") : "text-foreground")}>{row.games ? `${g.winrate.toFixed(0)}%` : "—"}</b>
+          ・{row.games} {unit}
+        </div>
+      </div>
+    )
+  }
+  const loading = all.loading || (showMine && mine.loading)
+
+  return (
+    <Panel
+      title="五人組成：五個人分別是什麼"
+      caption="每個人依出裝歸一類：坦克、鬥士、近戰／刺客（近戰英雄出 AD 輸出裝、AD／AP 刺客）、射手（有官方射手定位的英雄出 AD 輸出裝）、法師（AP 輸出）、輔助。判定看「所有隊伍」（每場兩隊都算）；區間已依一次比幾列放寬，整段在 50% 同一邊才寫強勢／不強勢"
+    >
+      {loading ? (
+        <Skeleton className="h-[420px] w-full" />
+      ) : !A.games ? (
+        <EmptyState>這個條件下還沒有對局。</EmptyState>
+      ) : (
+        <div className="reveal space-y-3">
+          <ToggleGroup
+            type="single"
+            size="sm"
+            variant="outline"
+            value={view}
+            onValueChange={(v) => v && setView(v as "count" | "combo")}
+          >
+            <ToggleGroupItem value="count">每種位置有幾個</ToggleGroupItem>
+            <ToggleGroupItem value="combo">常見的五人組合</ToggleGroupItem>
+          </ToggleGroup>
+          <p className="text-[11px] text-muted-foreground">
+            {view === "count"
+              ? "一隊裡這種位置有幾個時的勝率，其他四個位置不限。每列都有上百隊，看得出差別的比較可信。"
+              : `完整的五人組合有 ${all.rows.length} 種，這裡只列 ${LINEUP_MIN} 隊以上的 ${allCombo.length} 種。每種只有幾十隊，區間大多寬到 ±15pp，看不出差別是正常的；要看趨勢請切回「每種位置有幾個」。`}
+          </p>
+          <div className="max-w-[64rem]">
+            <div className={cn("grid items-end gap-x-3", grid)}>
+              <span className="pb-1 text-[11px] text-muted-foreground">{view === "count" ? "位置 × 人數" : "五個人"}</span>
+              <div>
+                <div className="text-center text-[11px] font-medium">所有隊伍（兩隊都算）</div>
+                <ForestAxis reach={reach} center={`${A.base.toFixed(0)}%`} compact />
+              </div>
+              {showMine && (
+                <div className="hidden lg:block">
+                  <div className="text-center text-[11px] font-medium">你們（目前範圍）</div>
+                  <ForestAxis reach={reach} center={`${M.base.toFixed(0)}%`} compact />
+                </div>
+              )}
+              <span className="pb-1 text-right text-[11px] text-muted-foreground">資料判定</span>
+            </div>
+            {shown.map((row, i) => {
+              const g = gapOf(row, A.base, z)
+              const verdict = strengthOf(g)
+              const groupStart = view === "count" && (i === 0 || shown[i - 1].key[0] !== row.key[0])
+              return (
+                <div
+                  key={row.key}
+                  data-testid="lineup-row"
+                  data-key={row.key}
+                  data-games={row.games}
+                  data-wins={row.wins}
+                  className={cn("grid items-center gap-x-3 border-b border-border/50 last:border-b-0", groupStart && i > 0 && "border-t border-t-border", grid)}
+                >
+                  <div className="min-w-0 py-1.5 text-[13px]">
+                    {view === "count" ? (
+                      <span title={LINEUP_CLASSES.find((c) => c.ch === row.key[0])?.hint}>{row.label}</span>
+                    ) : (
+                      <LineupChips lineup={row.key} />
+                    )}
+                  </div>
+                  {cell(row, A.base, "隊")}
+                  {showMine && <div className="hidden lg:block">{cell(mineOf(row), M.base, "隊")}</div>}
+                  <span className="text-right">
+                    <span className={cn("rounded border px-1.5 py-0.5 text-[11px]", VERDICT_CLASS[verdict])}>{verdictText(g, verdict)}</span>
+                  </span>
+                </div>
+              )
+            })}
           </div>
         </div>
       )}
@@ -543,6 +709,7 @@ export function Lineups() {
       ) : (
         <>
           <Archetypes who={who} scope={scope} />
+          <LineupFive who={who} scope={scope} />
           <Panel
             title="拆開看：各項陣容條件"
             caption={`每一列是一種陣容：點是那種陣容的勝率比整體 ${baseline === null ? "—" : `${baseline.toFixed(1)}%`} 高或低幾個百分點，線是 95% 區間。${

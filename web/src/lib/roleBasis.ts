@@ -20,5 +20,5 @@ export const ROLE_SPEC: RoleSpec = {
   labels: BUILD_ROLES,
   filterFor: (role) => [{ member: "builds.build_role", operator: "equals", values: [role] }],
   caption:
-    "依每場終場出裝判斷（坦克、AD 鬥士、AD 刺客、AD 輸出、AP 輸出、AP 刺客、AP 鬥士、輔助；AP 刺客另看英雄的官方定位），同一隻英雄不同場可能不一樣；太早結束沒成裝的場次不列入",
+    "依每場終場出裝判斷（坦克、AD 鬥士、AD 近戰、AD 刺客、射手、AP 輸出、AP 刺客、AP 鬥士、輔助；射手與 AP 刺客另看英雄的官方定位），同一隻英雄不同場可能不一樣；太早結束沒成裝的場次不列入",
 }

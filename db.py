@@ -241,6 +241,7 @@ LATE_COLUMNS = {
     "turret_kills": "turretKills",
     "largest_crit": "largestCriticalStrike",
     "units_healed": "totalUnitsHealed",
+    "inhibitor_kills": "inhibitorKills",
 }
 
 
@@ -495,9 +496,9 @@ def store_match(conn, game):
                     double_kills, triple_kills, quadra_kills, penta_kills,
                     first_blood, first_tower, dmg_to_objectives, longest_time_living,
                     taken_physical, taken_magic, taken_true, total_damage, cc_duration,
-                    largest_spree, killing_sprees, turret_kills, largest_crit, units_healed)
+                    largest_spree, killing_sprees, turret_kills, largest_crit, units_healed, inhibitor_kills)
                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,
-                           ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                           ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     platform_id, game_id, pid,
                     player.get("puuid") or "",
@@ -537,6 +538,7 @@ def store_match(conn, game):
                     _num(stats, "largestKillingSpree"), _num(stats, "killingSprees"),
                     _num(stats, "turretKills"), _num(stats, "largestCriticalStrike"),
                     _num(stats, "totalUnitsHealed"),
+                    _num(stats, "inhibitorKills"),
                 ),
             )
 

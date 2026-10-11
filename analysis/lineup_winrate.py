@@ -13,9 +13,9 @@ import sqlite3
 random.seed(5)
 c = sqlite3.connect("file:mayhem.db?mode=ro", uri=True)
 
-ROLES = ["坦克", "AD 鬥士", "AD 刺客", "AD 輸出", "AP 輸出", "AP 刺客", "AP 鬥士", "輔助"]
+ROLES = ["坦克", "AD 鬥士", "AD 近戰", "AD 刺客", "射手", "AP 輸出", "AP 刺客", "AP 鬥士", "輔助"]
 FRONT = {"坦克", "AD 鬥士", "AP 鬥士"}
-AD = {"AD 鬥士", "AD 輸出", "AD 刺客"}
+AD = {"AD 鬥士", "射手", "AD 近戰", "AD 刺客"}
 AP = {"AP 鬥士", "AP 輸出", "AP 刺客"}
 
 rows = c.execute(

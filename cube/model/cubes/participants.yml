@@ -664,7 +664,7 @@ cubes:
 
       - name: avg_objective_damage
         title: 平均建築傷害
-        description: "每場平均對建築與中立目標造成的傷害。"
+        description: "每場平均對建築與中立目標造成的傷害。大亂鬥沒有中立目標，實測和對防禦塔傷害完全相同（5,910 筆）。"
         sql: dmg_to_objectives
         type: avg
         meta:
@@ -775,6 +775,57 @@ cubes:
         meta:
           group: 戰鬥
           decimals: 1
+
+      - name: objective_damage_share
+        title: 建築傷害佔比
+        description: "對建築傷害佔我方全隊的比例（%），每場先算再取平均。看誰是隊上主要拆塔的人；射手天生偏高，比人時要搭配出裝定位看。"
+        sql: >
+          {CUBE}.dmg_to_objectives * 100.0 / NULLIF(
+            (SELECT SUM(t.dmg_to_objectives) FROM match_participants t
+             WHERE t.platform_id = {CUBE}.platform_id AND t.game_id = {CUBE}.game_id AND t.team_id = {CUBE}.team_id), 0)
+        type: avg
+        format: percent
+        meta:
+          group: 推進
+          unit: "%"
+          decimals: 1
+
+      - name: total_turret_kills
+        title: 推塔總數
+        description: "範圍內親手摧毀（最後一擊）的防禦塔總數。"
+        sql: turret_kills
+        type: sum
+        meta:
+          group: 推進
+
+      - name: avg_inhibitor_kills
+        title: 平均摧毀兵營
+        description: "每場平均親手摧毀（最後一擊）的兵營數。"
+        sql: inhibitor_kills
+        type: avg
+        meta:
+          group: 推進
+          decimals: 2
+
+      # 對局資料沒有「對小兵傷害」這個欄位（賽後統計也沒有），用總輸出扣掉對英雄與對建築的傷害估計：
+      # 大亂鬥沒有野怪（中立怪擊殺 5,910 筆全是 0），剩下的幾乎都是打在小兵身上（另含少量召喚物、假人之類）。
+      - name: avg_minion_damage
+        title: 平均小兵傷害（估）
+        description: "每場平均對小兵的傷害，估計值：總輸出 − 對英雄傷害 − 對建築傷害（大亂鬥沒有野怪，剩下的幾乎都是小兵）。"
+        sql: "({CUBE}.total_damage - {CUBE}.dmg_to_champions - COALESCE({CUBE}.dmg_to_objectives, 0))"
+        type: avg
+        meta:
+          group: 推進
+          decimals: 0
+
+      - name: minion_damage_per_min
+        title: 每分鐘小兵傷害（估）
+        description: "每分鐘對小兵的傷害，估計值，算法同平均小兵傷害。每場先除以對局分鐘數再取平均。"
+        sql: "({CUBE}.total_damage - {CUBE}.dmg_to_champions - COALESCE({CUBE}.dmg_to_objectives, 0)) * 60.0 / NULLIF({CUBE}.game_duration, 0)"
+        type: avg
+        meta:
+          group: 推進
+          decimals: 0
 
       - name: avg_turret_kills
         title: 平均推塔數

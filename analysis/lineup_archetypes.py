@@ -8,7 +8,7 @@ rows = c.execute("""SELECT p.platform_id,p.game_id,p.team_id,MAX(p.win),b.build_
 teams = {}
 for plat,gid,tid,win,role in rows:
     t = teams.setdefault((plat,gid,tid), {"w":win,"r":[]}); t["r"].append(role)
-CARRY={"AD 輸出","AP 輸出","AD 刺客","AP 刺客"}; FRONT={"坦克","AD 鬥士","AP 鬥士"}
+CARRY={"射手","AD 近戰","AP 輸出","AD 刺客","AP 刺客"}; FRONT={"坦克","AD 鬥士","AP 鬥士"}
 def wil(x,n,z=1.96):
     p=x/n; d=1+z*z/n; ctr=(p+z*z/(2*n))/d; h=z*math.sqrt(p*(1-p)/n+z*z/(4*n*n))/d; return ctr-h,ctr+h
 T=[t for t in teams.values() if len(t["r"])==5]

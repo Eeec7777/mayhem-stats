@@ -9,7 +9,8 @@ cubes:
   #   - 輔助裝 ≥ 35%                                   → 輔助
   #   - 坦度 ≥ 50%，且 AD、AP 都 < 25%                  → 坦克
   #   - 坦度 ≥ 30%                                     → AD 鬥士／AP 鬥士（看 AD、AP 哪堆多）
-  #   - 其餘，AD ≥ AP：AD 金額裡「穿甲裝」最多           → AD 刺客，否則 AD 輸出
+  #   - 其餘，AD ≥ AP：AD 金額裡「穿甲裝」最多           → AD 刺客
+  #                    否則英雄有官方「射手」定位           → 射手，否則 AD 近戰
   #   - 其餘，AP > AD：英雄的官方主定位是刺客            → AP 刺客，否則 AP 輸出
   #   - 沒有任何成裝（太早結束）                         → 未成形
   #   「AP 鬥士」舊稱「AP 坦」：它和 AD 鬥士對稱（坦度裝約一半、另一半是傷害裝，只差傷害類型），不是坦克；
@@ -24,6 +25,11 @@ cubes:
   # AP 刺客的裝備分不開（唯一線索魔法穿透，但黯影之炎幾乎每個法師都買），只好借英雄的官方主定位：
   # AP 輸出裝 + 官方主定位是刺客（艾克、奈德麗、飛斯、勒布朗、阿卡莉…），擊殺佔比 24.9%，法師 18.7%。
   # 主定位的定義同 champion_roles.is_primary（同一隻英雄 rowid 最小的那筆）。
+  #
+  # 射手／AD 近戰（2026-10-11 從「AD 輸出」拆開）：出一樣的 AD 輸出裝，手長的射手和近戰英雄（犽宿、犽凝、易大師、
+  # 剛普朗克、赫克林、貝爾薇斯…）打法完全不同——近戰要貼上去吃傷害，射手站後排。舊的 AD 輸出 1,682 筆裡 619 筆（37%）是後者。
+  # 客戶端資料沒有攻擊距離，用官方定位判斷：英雄的任何一個官方定位是 marksman（射手）就算射手（凱特琳、伊澤瑞爾、杰西、
+  # 凱爾、提摩…；近戰英雄都沒有這個定位），否則是 AD 近戰。不看主定位，因為杰西、凱爾這種的射手是第二定位。
   #
   # 類別來自客戶端 items.json（dim_item_categories）。
   #   AD  ：Damage、CriticalStrike、AttackSpeed、ArmorPenetration、LifeSteal、OnHit
@@ -66,6 +72,9 @@ cubes:
             SELECT champion_id, role FROM dim_champion_roles r
             WHERE r.rowid = (SELECT MIN(r2.rowid) FROM dim_champion_roles r2 WHERE r2.champion_id = r.champion_id)
           ),
+          marksman AS (
+            SELECT DISTINCT champion_id FROM dim_champion_roles WHERE role = 'marksman'
+          ),
           per_item AS (
             SELECT pi.platform_id, pi.game_id, pi.participant_id, g.price, g.is_sup, g.ad_kind,
                    g.is_ad, g.is_ap, g.is_tank, (g.is_ad + g.is_ap + g.is_tank) AS n
@@ -101,8 +110,9 @@ cubes:
                      AND g.ap / (g.ad + g.ap + g.tank + g.sup) < 0.25 THEN '坦克'
                 WHEN g.tank / (g.ad + g.ap + g.tank + g.sup) >= 0.3 THEN CASE WHEN g.ad >= g.ap THEN 'AD 鬥士' ELSE 'AP 鬥士' END
                 WHEN g.ad >= g.ap THEN
-                  CASE WHEN g.ad_pen > g.ad_crit AND g.ad_pen > g.ad_as AND g.ad_pen > g.ad_other
-                       THEN 'AD 刺客' ELSE 'AD 輸出' END
+                  CASE WHEN g.ad_pen > g.ad_crit AND g.ad_pen > g.ad_as AND g.ad_pen > g.ad_other THEN 'AD 刺客'
+                       WHEN mk.champion_id IS NOT NULL THEN '射手'
+                       ELSE 'AD 近戰' END
                 WHEN pr.role = 'assassin' THEN 'AP 刺客'
                 ELSE 'AP 輸出'
               END AS build_role,
@@ -114,11 +124,13 @@ cubes:
             JOIN team_taken tt ON tt.platform_id = mp.platform_id AND tt.game_id = mp.game_id AND tt.team_id = mp.team_id
             LEFT JOIN gold g ON g.platform_id = mp.platform_id AND g.game_id = mp.game_id AND g.participant_id = mp.participant_id
             LEFT JOIN primary_role pr ON pr.champion_id = mp.champion_id
+            LEFT JOIN marksman mk ON mk.champion_id = mp.champion_id
           ),
           scored AS (
             SELECT *,
               CASE build_role
-                WHEN 'AD 輸出' THEN dmg_share
+                WHEN '射手' THEN dmg_share
+                WHEN 'AD 近戰' THEN dmg_share
                 WHEN 'AP 輸出' THEN dmg_share
                 WHEN 'AD 刺客' THEN dmg_share
                 WHEN 'AP 刺客' THEN dmg_share
@@ -155,7 +167,7 @@ cubes:
       # 字串而不是數字比較：理由同 participants.is_me（CASE 運算式沒有型別親和性）
       - name: build_role
         title: 出裝定位
-        description: "依終場裝備判斷的實際定位：AD 輸出、AD 刺客、AP 輸出、AP 刺客、坦克、AD 鬥士、AP 鬥士、輔助、未成形。AD 刺客＝AD 裝以物理致命／穿甲裝為主；AP 刺客＝AP 輸出裝且英雄官方主定位是刺客。規則見 cube/model/cubes/builds.yml；和英雄的官方定位（champion_roles）不同，同一隻英雄不同場可能不一樣。"
+        description: "依終場裝備判斷的實際定位：射手、AD 近戰、AD 刺客、AP 輸出、AP 刺客、坦克、AD 鬥士、AP 鬥士、輔助、未成形。射手／AD 近戰＝AD 輸出裝，英雄有官方射手定位的是射手、其餘是 AD 近戰；AD 刺客＝AD 裝以物理致命／穿甲裝為主；AP 刺客＝AP 輸出裝且英雄官方主定位是刺客。規則見 cube/model/cubes/builds.yml；和英雄的官方定位（champion_roles）不同，同一隻英雄不同場可能不一樣。"
         sql: build_role
         type: string
         meta:

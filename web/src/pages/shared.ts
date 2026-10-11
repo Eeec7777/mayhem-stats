@@ -54,18 +54,19 @@ export function toBlocks(hours: HourCell[]): BlockCell[] {
   }))
 }
 
-/** 出裝定位（builds.build_role）在雷達上的順序（八個頂點）：
- *  坦克 → AD 鬥士 → AD 刺客 → AD 輸出 → AP 輸出 → AP 刺客 → AP 鬥士 → 輔助 → 回到坦克。
+/** 出裝定位（builds.build_role）在雷達上的順序：
+ *  坦克 → AD 鬥士 → AD 近戰 → AD 刺客 → 射手 → AP 輸出 → AP 刺客 → AP 鬥士 → 輔助 → 回到坦克（九個頂點）。
  *  相鄰的是性質相近的：AD 一側由肉到脆、AP 一側由脆到肉，刺客夾在鬥士／坦與輸出之間，輔助接回坦克（開團／保人）。
  *  「未成形」不畫。 */
-export const BUILD_ROLES = ["坦克", "AD 鬥士", "AD 刺客", "AD 輸出", "AP 輸出", "AP 刺客", "AP 鬥士", "輔助"]
+export const BUILD_ROLES = ["坦克", "AD 鬥士", "AD 近戰", "AD 刺客", "射手", "AP 輸出", "AP 刺客", "AP 鬥士", "輔助"]
 
 /** 迷你六邊形與標籤用的短名 */
 export const BUILD_SHORT: Record<string, string> = {
   坦克: "坦",
   "AD 鬥士": "鬥",
   "AD 刺客": "刺",
-  "AD 輸出": "AD",
+  "AD 近戰": "近",
+  射手: "射",
   "AP 輸出": "AP",
   "AP 刺客": "法刺",
   輔助: "輔",

@@ -90,6 +90,11 @@ views:
           - avg_cc
           - avg_largest_spree
           - avg_turret_kills
+          - total_turret_kills
+          - avg_inhibitor_kills
+          - objective_damage_share
+          - avg_minion_damage
+          - minion_damage_per_min
           - best_crit
           - avg_units_healed
           - avg_gold
@@ -232,6 +237,8 @@ views:
           - name: enemy_comp
           - name: team_archetype
           - name: enemy_archetype
+          - name: team_lineup
+          - name: enemy_lineup
 
       - join_path: participants.contribution
         includes:
