@@ -90,6 +90,9 @@ views:
           - avg_cc
           - avg_largest_spree
           - avg_turret_kills
+          - avg_time_dead
+          - time_dead_share
+          - time_dead_games
           - total_turret_kills
           - avg_inhibitor_kills
           - objective_damage_share

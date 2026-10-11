@@ -25,7 +25,18 @@ import { ROLE_SPEC } from "@/lib/roleBasis"
 const CubeMatchList = lazy(() => import("@/components/MatchList").then((m) => ({ default: m.CubeMatchList })))
 const MatchDetail = lazy(() => import("./Matches").then((m) => ({ default: m.MatchDetail })))
 
-const REF_MEASURES = ["participants.kda", "participants.dpm", "participants.gpm", "participants.kill_participation"]
+const REF_MEASURES = [
+  "participants.kda",
+  "participants.dpm",
+  "participants.gpm",
+  "participants.kill_participation",
+  "participants.avg_objective_damage",
+  "participants.avg_minion_damage",
+  "participants.avg_deaths",
+  "participants.avg_time_dead",
+]
+/** 秒數寫成「4:32」 */
+const mmss = (sec: number) => `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, "0")}`
 
 /** 最近幾場要列幾場；連勝連敗往回數到幾場為止（超過就顯示「20+」） */
 const RECENT_SHOWN = 10
@@ -325,6 +336,12 @@ export function Dashboard() {
         "participants.dpm",
         "participants.gpm",
         "participants.kill_participation",
+        "participants.avg_objective_damage",
+        "participants.avg_minion_damage",
+        "participants.avg_deaths",
+        "participants.avg_time_dead",
+        "participants.time_dead_share",
+        "participants.time_dead_games",
       ],
     }),
   )
@@ -473,6 +490,32 @@ export function Dashboard() {
         <Kpi index={3} label="每分鐘傷害" value={metric("participants.dpm", round0)} hint={refHint("participants.dpm", round0)} loading={totals.loading} />
         <Kpi index={4} label="每分鐘經濟" value={metric("participants.gpm", round0)} hint={refHint("participants.gpm", round0)} loading={totals.loading} />
         <Kpi index={5} label="參團率" value={metric("participants.kill_participation", round1, "%")} hint={refHint("participants.kill_participation", round1, "%")} loading={totals.loading} />
+        <Kpi index={6} label="對塔平均傷害" value={metric("participants.avg_objective_damage", round0)} hint={refHint("participants.avg_objective_damage", round0)} loading={totals.loading} />
+        <Kpi
+          index={7}
+          label="對小兵平均傷害（估）"
+          value={metric("participants.avg_minion_damage", round0)}
+          hint={[refHint("participants.avg_minion_damage", round0), "總輸出 − 對英雄 − 對塔"].filter(Boolean).join("・")}
+          loading={totals.loading}
+        />
+        <Kpi index={8} label="平均死亡" value={metric("participants.avg_deaths", round1)} hint={refHint("participants.avg_deaths", round1)} loading={totals.loading} />
+        <Kpi
+          index={9}
+          label="平均死亡時間"
+          value={metric("participants.avg_time_dead", mmss)}
+          hint={
+            num(row["participants.time_dead_games"])
+              ? [
+                  `占全場 ${round1(num(row["participants.time_dead_share"]) ?? 0)}%`,
+                  `只算有賽後統計的 ${num(row["participants.time_dead_games"])} 場`,
+                  refHint("participants.avg_time_dead", mmss),
+                ]
+                  .filter(Boolean)
+                  .join("・")
+              : "對局資料沒有死亡時間，只有開始擷取賽後統計之後的場次才有"
+          }
+          loading={totals.loading}
+        />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-12">

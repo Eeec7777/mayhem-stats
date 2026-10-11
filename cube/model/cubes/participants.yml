@@ -2,9 +2,12 @@ cubes:
   - name: participants
     title: 對局表現
     # 重開局（matches.is_remake）的參賽紀錄不算。rowid 要原樣帶出來：主鍵與衍生表（mat_*）的 participant_rowid 都是它
+    # time_spent_dead（死亡總時間）對局明細沒有，只有賽後統計有（eog_player_stats，主鍵 game_id＋puuid，所以一對一不會多列）；
+    # 開始擷取賽後統計之前的場次是空值
     sql: >
-      SELECT mp.rowid AS rowid, mp.*
+      SELECT mp.rowid AS rowid, mp.*, e.time_spent_dead AS time_spent_dead
       FROM match_participants mp
+      LEFT JOIN eog_player_stats e ON e.game_id = mp.game_id AND e.puuid = mp.puuid
       WHERE NOT EXISTS (
         SELECT 1 FROM matches rm
         WHERE rm.platform_id = mp.platform_id AND rm.game_id = mp.game_id AND rm.is_remake = 1
@@ -540,6 +543,37 @@ cubes:
           group: 戰鬥
           decimals: 1
           higherIsBetter: false
+
+      - name: avg_time_dead
+        title: 平均死亡時間
+        description: "每場平均在死亡倒數裡的總秒數（totalTimeSpentDead）。對局明細沒有這個欄位，只有賽後統計有：只算開始擷取賽後統計之後、而且採集器有抓到賽後畫面的場次（場數見 time_dead_games）。"
+        sql: time_spent_dead
+        type: avg
+        meta:
+          group: 戰鬥
+          unit: 秒
+          decimals: 0
+          higherIsBetter: false
+
+      - name: time_dead_share
+        title: 死亡時間佔比
+        description: "死亡總時間佔全場時間的比例（%），每場先算再平均。只算有賽後統計的場次，同平均死亡時間。"
+        sql: "{CUBE}.time_spent_dead * 100.0 / NULLIF({CUBE}.game_duration, 0)"
+        type: avg
+        format: percent
+        meta:
+          group: 戰鬥
+          unit: "%"
+          decimals: 1
+          higherIsBetter: false
+
+      - name: time_dead_games
+        title: 有死亡時間的場次
+        description: "有賽後統計（死亡總時間）的場次數，平均死亡時間與死亡時間佔比只算這些場次。"
+        sql: "CASE WHEN {CUBE}.time_spent_dead IS NOT NULL THEN {CUBE}.rowid END"
+        type: count_distinct
+        meta:
+          group: 戰鬥
 
       - name: avg_assists
         title: 平均助攻

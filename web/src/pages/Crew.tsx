@@ -1548,25 +1548,45 @@ const PUSH_COLS = [
   { key: "participants.avg_inhibitor_kills", label: "每場兵營", fmt: (v: number) => v.toFixed(2), hint: "每場親手摧毀的兵營數" },
   { key: "participants.minion_damage_per_min", label: "每分鐘小兵傷害", fmt: (v: number) => Math.round(v).toLocaleString(), hint: "估計值：總輸出 − 對英雄傷害 − 對建築傷害（大亂鬥沒有野怪，剩下的幾乎都是小兵）" },
   { key: "participants.cs_per_min", label: "每分鐘補兵", fmt: (v: number) => v.toFixed(1), hint: "每分鐘擊殺的小兵數" },
-] as const
-const PUSH_MEASURES = ["participants.games", ...PUSH_COLS.map((c) => c.key)]
+  { key: "participants.avg_deaths", label: "平均死亡", fmt: (v: number) => v.toFixed(1), hint: "每場平均死亡次數（越少越好）", lower: true },
+  {
+    key: "participants.avg_time_dead",
+    label: "平均死亡時間",
+    fmt: (v: number) => `${Math.floor(v / 60)}:${String(Math.round(v % 60)).padStart(2, "0")}`,
+    hint: "每場在死亡倒數裡的總時間（越少越好）。對局資料沒有，只算有賽後統計的場次（2026-10-03 起、採集器有抓到賽後畫面的）",
+    lower: true,
+  },
+] as { key: string; label: string; fmt: (v: number) => string; hint: string; lower?: boolean }[]
+const PUSH_MEASURES = ["participants.games", "participants.time_dead_games", ...PUSH_COLS.map((c) => c.key)]
 
 function PushPanel({ people, rows, loading, profiles }: { people: Player[]; rows: CubeRow[]; loading: boolean; profiles: Map<string, Profile> }) {
   const [sortKey, setSortKey] = useState<string>(PUSH_COLS[0].key)
   const rowOf = (puuid: string) => rows.find((r) => r["participants.puuid"] === puuid)
-  const sorted = [...people].sort((a, b) => (opt(rowOf(b.puuid), sortKey) ?? -1) - (opt(rowOf(a.puuid), sortKey) ?? -1))
-  const best = new Map(PUSH_COLS.map((c) => [c.key, Math.max(...people.map((p) => opt(rowOf(p.puuid), c.key) ?? -Infinity))]))
+  const lowerSort = PUSH_COLS.find((c) => c.key === sortKey)?.lower
+  const sorted = [...people].sort((a, b) => {
+    const va = opt(rowOf(a.puuid), sortKey)
+    const vb = opt(rowOf(b.puuid), sortKey)
+    if (va === null || vb === null) return va === null ? (vb === null ? 0 : 1) : -1
+    return lowerSort ? va - vb : vb - va
+  })
+  // 每欄最好的人：死亡類越少越好
+  const best = new Map(
+    PUSH_COLS.map((c) => {
+      const vals = people.map((p) => opt(rowOf(p.puuid), c.key)).filter((v): v is number => v !== null)
+      return [c.key, vals.length ? (c.lower ? Math.min(...vals) : Math.max(...vals)) : null]
+    }),
+  )
   const shareOf = (puuid: string, label: string) => profiles.get(puuid)?.style.mix.find((m) => m.label === label)?.share ?? 0
   return (
     <Panel
-      title="推塔與清兵"
-      caption="誰比較常拆塔、清兵。大亂鬥是團戰贏了之後推塔決勝，拆塔是把優勢換成勝利的那一步。射手天生打塔快，所以最後一欄附上射手的場次比例，比人時一起看。點欄位標題換排序；每欄最高的人標綠"
+      title="推塔、清兵與陣亡"
+      caption="誰比較常拆塔、清兵，誰比較少死。大亂鬥是團戰贏了之後推塔決勝，拆塔是把優勢換成勝利的那一步。射手天生打塔快，所以最後一欄附上射手的場次比例，比人時一起看。點欄位標題換排序；每欄最好的人標綠（死亡類是越少越好）"
     >
       {loading ? (
         <Skeleton className="h-[260px] w-full" />
       ) : (
         <div className="reveal overflow-x-auto">
-          <table className="w-full min-w-[860px] text-sm" data-testid="crew-push">
+          <table className="w-full min-w-[1080px] text-sm" data-testid="crew-push">
             <thead>
               <tr className="border-b text-[11px] text-muted-foreground">
                 <th className="px-2 py-1.5 text-left font-medium">玩家</th>
@@ -1603,6 +1623,9 @@ function PushPanel({ people, rows, loading, profiles }: { people: Player[]; rows
                           className={cn("px-2 py-1.5 text-right font-mono tabular-nums", v !== null && v === best.get(c.key) && "font-semibold text-win")}
                         >
                           {v === null ? "—" : c.fmt(v)}
+                          {c.key === "participants.avg_time_dead" && v !== null && (
+                            <span className="ml-1 text-[10px] font-normal text-muted-foreground">{n0(r, "participants.time_dead_games")} 場</span>
+                          )}
                         </td>
                       )
                     })}
