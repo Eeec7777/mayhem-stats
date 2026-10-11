@@ -56,6 +56,12 @@ cubes:
         sql: "{CUBE}.platform_id = {items}.platform_id AND {CUBE}.game_id = {items}.game_id AND {CUBE}.participant_id = {items}.participant_id"
         relationship: one_to_many
 
+      # 「這場還有誰」。只拿來篩「某個帳號也在場的對局」（game_players.puuid 等於某人），
+      # 一對多：以它的欄位分組時一場會展開成十列。說明與注意事項在 dimensions.yml 的 game_players。
+      - name: game_players
+        sql: "{CUBE}.platform_id = {game_players}.platform_id AND {CUBE}.game_id = {game_players}.game_id"
+        relationship: one_to_many
+
       - name: participant_context
         sql: "{CUBE}.rowid = {participant_context}.participant_rowid"
         relationship: one_to_one
@@ -1034,3 +1040,132 @@ cubes:
         sql: "{team_gpm} - {enemy_gpm}"
         type: number
         meta: { group: 團隊, decimals: 0, higherIsBetter: true }
+
+      # ── 單場紀錄：每分鐘數值「最高的那一場」 ──────────────────────────────────
+      # 和上面的每分鐘指標成對:那些是 avg(每場先除以對局時間,再把各場平均起來),
+      # 這些是 max(範圍內最高的那一場)。算式一字不差地照抄對應的 avg 指標,
+      # 兩邊才不會各有一套定義。
+      #
+      # 以 participants.participant_key 分組時一組只有一列,max 等於那一場自己的值——
+      # 所以「最高是多少」和「是哪幾場」可以用同一個指標查,紀錄榜上的數字和清單裡的
+      # 數字保證同源。追蹤對象頁的紀錄榜就是這樣用的。
+      #
+      # 分母是整場時間,短局的每分鐘值天生偏高(前期人頭密、補兵少),畫面上要一起
+      # 顯示那一場的長度。重開局(matches.is_remake)本來就不在這個 cube 裡。
+      - name: best_kills_per_min
+        title: 單場最高每分鐘擊殺
+        description: "範圍內每分鐘擊殺最高的那一場的值（擊殺 ÷ 對局分鐘數）。以參賽者鍵分組時就是該場的值。"
+        sql: "{CUBE}.kills * 60.0 / NULLIF({CUBE}.game_duration, 0)"
+        type: max
+        meta:
+          group: 紀錄
+          decimals: 2
+          higherIsBetter: true
+
+      - name: best_deaths_per_min
+        title: 單場最高每分鐘死亡
+        description: "範圍內每分鐘死亡最高的那一場的值（死亡 ÷ 對局分鐘數）。這是「最慘的一場」，不是好成績。"
+        sql: "{CUBE}.deaths * 60.0 / NULLIF({CUBE}.game_duration, 0)"
+        type: max
+        meta:
+          group: 紀錄
+          decimals: 2
+          higherIsBetter: false
+
+      - name: best_assists_per_min
+        title: 單場最高每分鐘助攻
+        description: "範圍內每分鐘助攻最高的那一場的值（助攻 ÷ 對局分鐘數）。"
+        sql: "{CUBE}.assists * 60.0 / NULLIF({CUBE}.game_duration, 0)"
+        type: max
+        meta:
+          group: 紀錄
+          decimals: 2
+          higherIsBetter: true
+
+      - name: best_dpm
+        title: 單場最高每分鐘傷害
+        description: "範圍內每分鐘對英雄傷害最高的那一場的值。算式同每分鐘傷害（dpm）。"
+        sql: "{CUBE}.dmg_to_champions * 60.0 / NULLIF({CUBE}.game_duration, 0)"
+        type: max
+        meta:
+          group: 紀錄
+          decimals: 0
+          higherIsBetter: true
+
+      - name: best_taken_per_min
+        title: 單場最高每分鐘承受傷害
+        description: "範圍內每分鐘承受傷害最高的那一場的值。算式同每分鐘承受傷害。"
+        sql: "{CUBE}.dmg_taken * 60.0 / NULLIF({CUBE}.game_duration, 0)"
+        type: max
+        meta:
+          group: 紀錄
+          decimals: 0
+
+      - name: best_mitigated_per_min
+        title: 單場最高每分鐘減免傷害
+        description: "範圍內每分鐘減免傷害最高的那一場的值。算式同每分鐘減免傷害。"
+        sql: "{CUBE}.dmg_mitigated * 60.0 / NULLIF({CUBE}.game_duration, 0)"
+        type: max
+        meta:
+          group: 紀錄
+          decimals: 0
+
+      - name: best_heal_per_min
+        title: 單場最高每分鐘治療
+        description: "範圍內每分鐘治療量（含自補）最高的那一場的值。算式同每分鐘治療。"
+        sql: "{CUBE}.total_heal * 60.0 / NULLIF({CUBE}.game_duration, 0)"
+        type: max
+        meta:
+          group: 紀錄
+          decimals: 0
+
+      - name: best_cc_time_per_min
+        title: 單場最高每分鐘控場
+        description: "範圍內每分鐘控場時間（timeCCingOthers）最高的那一場的值。算式同每分鐘控場。"
+        sql: "{CUBE}.time_ccing_others * 60.0 / NULLIF({CUBE}.game_duration, 0)"
+        type: max
+        meta:
+          group: 紀錄
+          unit: 秒
+          decimals: 1
+          higherIsBetter: true
+
+      - name: best_gpm
+        title: 單場最高每分鐘經濟
+        description: "範圍內每分鐘獲得金錢最高的那一場的值。算式同每分鐘經濟（gpm）。"
+        sql: "{CUBE}.gold_earned * 60.0 / NULLIF({CUBE}.game_duration, 0)"
+        type: max
+        meta:
+          group: 紀錄
+          decimals: 0
+          higherIsBetter: true
+
+      - name: best_cs_per_min
+        title: 單場最高每分鐘補兵
+        description: "範圍內每分鐘補兵最高的那一場的值。算式同每分鐘補兵。"
+        sql: "{CUBE}.cs * 60.0 / NULLIF({CUBE}.game_duration, 0)"
+        type: max
+        meta:
+          group: 紀錄
+          decimals: 1
+          higherIsBetter: true
+
+      - name: best_objective_damage_per_min
+        title: 單場最高每分鐘建築傷害
+        description: "範圍內每分鐘對建築與中立目標傷害最高的那一場的值。算式同每分鐘目標傷害。"
+        sql: "{CUBE}.dmg_to_objectives * 60.0 / NULLIF({CUBE}.game_duration, 0)"
+        type: max
+        meta:
+          group: 紀錄
+          decimals: 0
+          higherIsBetter: true
+
+      - name: best_minion_damage_per_min
+        title: 單場最高每分鐘小兵傷害（估）
+        description: "範圍內每分鐘小兵傷害（估計值：總輸出 − 對英雄 − 對建築）最高的那一場的值。算式同每分鐘小兵傷害（估）。"
+        sql: "({CUBE}.total_damage - {CUBE}.dmg_to_champions - COALESCE({CUBE}.dmg_to_objectives, 0)) * 60.0 / NULLIF({CUBE}.game_duration, 0)"
+        type: max
+        meta:
+          group: 紀錄
+          decimals: 0
+          higherIsBetter: true
