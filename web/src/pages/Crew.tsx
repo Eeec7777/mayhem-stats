@@ -662,7 +662,7 @@ const STYLE_MIN = 20
 /** 打法用的六項（表現分），順序同 PERF_PARTS */
 const AXES = [
   { key: "contribution.perf_dmg", label: "輸出", up: "輸出高", down: "輸出偏低" },
-  { key: "contribution.perf_soak", label: "承傷", up: "很能扛", down: "承傷少" },
+  { key: "contribution.perf_soak", label: "承傷", up: "很耐打", down: "扛不住" },
   { key: "contribution.perf_surv", label: "存活", up: "很少死", down: "常陣亡" },
   { key: "contribution.perf_kp", label: "參團", up: "常參團", down: "參團少" },
   { key: "contribution.perf_cc", label: "控場", up: "控場多", down: "控場少" },

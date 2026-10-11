@@ -27,7 +27,7 @@ export const CONTRIB_MEASURES = ["contribution.score", ...CONTRIB_PARTS.map((c) 
 /** 表現分的六項，順序與 CONTRIB_PARTS 相同；比的是每分鐘的實際數值，不看隊友占了多少 */
 export const PERF_PARTS = [
   { key: "contribution.perf_dmg", label: "輸出", hint: "每分鐘對英雄傷害" },
-  { key: "contribution.perf_soak", label: "承傷", hint: "每分鐘承受傷害＋自身減免" },
+  { key: "contribution.perf_soak", label: "承傷", hint: "扛傷效率：每死一次之前扛了多少傷害（承受＋自身減免）÷（死亡＋1）" },
   { key: "contribution.perf_surv", label: "存活", hint: "每分鐘死亡，越少越好（分數越高代表死得越少）" },
   { key: "contribution.perf_kp", label: "參團", hint: "(擊殺＋助攻) / 隊伍擊殺" },
   { key: "contribution.perf_cc", label: "控場", hint: "每分鐘控制敵人的時間" },
