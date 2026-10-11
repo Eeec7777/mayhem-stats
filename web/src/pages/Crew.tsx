@@ -45,7 +45,7 @@ import { BUILD_ROLES, BUILD_SHORT, NO_LIMIT, round0, splitRiotId } from "./share
 //   和 50 比，95% 區間（標準誤＝單場標準差 PERF_SD 19 ÷ √有分數的場數）整段高於 50 是「強勢」、整段低於 50 是「不強勢」；
 //   差 PERF_GAP（4）分以上但區間還跨過 50 是「偏強／偏弱」；其餘畫面上寫「普通」；不到 MIN_N 場寫「場次不夠」。
 //   同一個人同時比好幾種出裝（或好幾隻英雄）時用 zFor(k) 放寬區間——一次比二十隻，總會有一兩隻只是運氣。
-// 勝率只當補充：和他自己的整體勝率比，區間（同樣放寬）整段在一邊才標 ▲▼，以及「非戰之罪」（貢獻強勢但勝率明顯低）、
+// 勝率只當補充：和他自己的整體勝率比，區間（同樣放寬）整段在一邊才標 ▲▼，以及「非戰之罪」（表現好但勝率比他平常低 WR_LUCK 以上）、
 //   「靠隊友」（貢獻不強勢但勝率明顯高）。好友多半一起打、勝率互相牽動，2026-10 實測每個人的整體勝率都和 50% 分不出差別。
 // 舊版用固定門檻（貢獻差 6 分、勝率差 3／5pp），不管場次：89% 的出裝、82% 的英雄都被貼上「適合／不適合」，
 //   而且幾乎全部跟著這個人的整體水準走（整體強的人每個出裝都「適合」）。改成區間之後，看得出的只剩真的看得出的。
@@ -141,19 +141,27 @@ function judgeAll(stats: Stat[], own: Own) {
 
 const wrFlag = (j: Judged) => (j.wr?.clear ? (j.wr.diff > 0 ? "up" : "down") : null)
 
-/** 勝率的補充說明：只有勝率的區間也整段在一邊才講 */
 /** 勝率和他自己的平均差這麼多（百分點）以上、但還在誤差內時，補一句「勝率偏高／偏低」 */
 const WR_LEAN = 15
+/** 表現和勝率走反方向（打得好卻常輸、打得差卻常贏）要差這麼多百分點、至少 LUCK_MIN 場，才標「非戰之罪／靠隊友」 */
+const WR_LUCK = 10
+const LUCK_MIN = 10
 
-/** 勝率的補充說明：區間整段在一邊是「明顯」（以及非戰之罪／靠隊友），差 WR_LEAN 以上但還在誤差內是「偏」 */
+/** 勝率的補充說明：
+ *  - 表現比同類型好（強勢／偏強），勝率卻比他自己的平均低 WR_LUCK 以上 →「非戰之罪」：輸多半不是他的問題
+ *  - 表現比同類型差（不強勢／偏弱），勝率卻高 WR_LUCK 以上 →「靠隊友」
+ *    這兩個不要求勝率的區間整段在一邊：勝率每項只有幾十場，區間幾乎都寬到 ±20pp，那樣幾乎永遠不會出現；
+ *    表現分本身已經是看得出（或偏）的才標，誤差另外寫在滑過的說明裡
+ *  - 其餘：勝率區間整段在一邊是「明顯高／低」，差 WR_LEAN 以上但還在誤差內是「偏高／偏低」 */
 function extraOf(j: Judged) {
-  const f = wrFlag(j)
-  if (f) {
-    if (j.strength === "強勢" && f === "down") return "非戰之罪"
-    if (j.strength === "不強勢" && f === "up") return "靠隊友"
-    return f === "up" ? "勝率明顯高" : "勝率明顯低"
+  const d = j.wr?.interval ? j.wr.diff : null
+  if (d !== null && j.games >= LUCK_MIN) {
+    if (isPos(j.strength) && d <= -WR_LUCK) return "非戰之罪"
+    if (isNeg(j.strength) && d >= WR_LUCK) return "靠隊友"
   }
-  if (j.wr?.interval && Math.abs(j.wr.diff) >= WR_LEAN) return j.wr.diff > 0 ? "勝率偏高" : "勝率偏低"
+  const f = wrFlag(j)
+  if (f) return f === "up" ? "勝率明顯高" : "勝率明顯低"
+  if (d !== null && Math.abs(d) >= WR_LEAN) return d > 0 ? "勝率偏高" : "勝率偏低"
   return null
 }
 
@@ -184,8 +192,10 @@ function tipOf(j: Judged, ownWr: number | null) {
     )
   }
   const x = extraOf(j)
-  if (x === "非戰之罪") lines.push("貢獻比同類型高，但勝率比他平常低：輸多半不是他的問題")
-  if (x === "靠隊友") lines.push("貢獻比同類型低，但勝率比他平常高：贏多半是隊友或陣容")
+  if (x === "非戰之罪")
+    lines.push(`非戰之罪：表現比同類型好，勝率卻比他平常低 ${WR_LUCK} 個百分點以上，輸多半不是他的問題${j.wr?.clear ? "" : "（勝率差距還在誤差內）"}`)
+  if (x === "靠隊友")
+    lines.push(`靠隊友：表現比同類型差，勝率卻比他平常高 ${WR_LUCK} 個百分點以上，贏多半是隊友或陣容${j.wr?.clear ? "" : "（勝率差距還在誤差內）"}`)
   return lines.join("\n")
 }
 
@@ -373,9 +383,28 @@ function RoleChips({ items, ownWr }: { items: Judged[]; ownWr: number | null }) 
         >
           <span className="mr-1 font-mono font-bold">{n + 1}</span>
           <span className="opacity-80">{j.strength}</span> {j.label}
-          {wrFlag(j) && <span className={wrFlag(j) === "up" ? "ml-0.5 text-win" : "ml-0.5 text-loss"}>{wrFlag(j) === "up" ? "▲" : "▼"}</span>}
+          {j.winrate !== null && (
+            <span className={cn("ml-1 font-mono", wrFlag(j) === "up" ? "text-win" : wrFlag(j) === "down" ? "text-loss" : "opacity-70")}>
+              {Math.round(j.winrate)}%{wrFlag(j) === "up" ? "▲" : wrFlag(j) === "down" ? "▼" : ""}
+            </span>
+          )}
+          <LuckTag j={j} />
         </span>
       ))}
+    </span>
+  )
+}
+
+/** 表現和勝率走反方向時的小標：「非戰之罪」「靠隊友」 */
+function LuckTag({ j }: { j: Judged }) {
+  const x = extraOf(j)
+  if (x !== "非戰之罪" && x !== "靠隊友") return null
+  return (
+    <span
+      data-testid="crew-luck"
+      className={cn("ml-1 rounded-sm px-1 text-[10px]", x === "非戰之罪" ? "bg-win/15 text-win" : "bg-loss/15 text-loss")}
+    >
+      {x}
     </span>
   )
 }
@@ -390,13 +419,19 @@ function RowLegend() {
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
       {chip("強勢", "比同類型強（看得出）")}
-      {chip("偏強", "高 6 分以上，還在誤差內")}
+      {chip("偏強", `高 ${PERF_GAP} 分以上，還在誤差內`)}
       {chip("看不出", "和同類型差不多")}
-      {chip("偏弱", "低 6 分以上，還在誤差內")}
+      {chip("偏弱", `低 ${PERF_GAP} 分以上，還在誤差內`)}
       {chip("不強勢", "比同類型弱（看得出）")}
       <span>
         <span className="text-win">▲</span>
-        <span className="text-loss">▼</span> 勝率比他自己的平均明顯高／低
+        <span className="text-loss">▼</span> 後面的 % 是勝率，▲▼＝比他自己的平均明顯高／低
+      </span>
+      <span>
+        <span className="rounded-sm bg-win/15 px-1 text-[10px] text-win">非戰之罪</span> 表現好但常輸（勝率低 {WR_LUCK}pp 以上）
+      </span>
+      <span>
+        <span className="rounded-sm bg-loss/15 px-1 text-[10px] text-loss">靠隊友</span> 表現差但常贏
       </span>
     </div>
   )
@@ -448,6 +483,17 @@ function ChampBadge({ j, rank, ownWr, onClick }: { j: Judged; rank: number; ownW
       >
         {Math.round(j.score ?? 50)}
       </span>
+      {(extraOf(j) === "非戰之罪" || extraOf(j) === "靠隊友") && (
+        <span
+          data-testid="crew-champ-luck"
+          className={cn(
+            "absolute -right-1 -top-1 z-10 rounded-sm px-0.5 text-[8px] leading-tight ring-1 ring-background",
+            extraOf(j) === "非戰之罪" ? "bg-win text-background" : "bg-loss text-background",
+          )}
+        >
+          {extraOf(j) === "非戰之罪" ? "非戰" : "隊友"}
+        </span>
+      )}
     </span>
   )
   const tip = `第 ${rank} 名・${tipOf(j, ownWr)}${onClick ? "\n點一下看他玩這隻的每一場" : ""}`
@@ -1628,6 +1674,8 @@ function StatsPanel({
   profiles: Map<string, Profile>
 }) {
   const [setId, setSetId] = useState<string>("dmg")
+  // 點一格：下面列出算進這格的每一場（出裝比例那組只列那種出裝／那種傷害類型的場次）
+  const [drill, setDrill] = useState<{ puuid: string; key: string; label: string } | null>(null)
   const [sortKey, setSortKey] = useState<string>("participants.avg_damage")
   const isMix = setId === "mix"
   const set = STAT_SETS.find((g) => g.id === setId)
@@ -1669,7 +1717,7 @@ function StatsPanel({
   return (
     <Panel
       title="數據總表"
-      caption="每個人的各項平均（每場先算再平均）。切換上方的分組看不同面向；點欄位標題換排序；每欄最好的人標綠（死亡類是越少越好）。比人時記得出裝不同：射手天生打塔快、坦克天生承傷多，可以對照「出裝比例」"
+      caption="每個人的各項平均（每場先算再平均）。切換上方的分組看不同面向；點欄位標題換排序，點數字看算進去的每一場；每欄最好的人標綠（死亡類是越少越好）。比人時記得出裝不同：射手天生打塔快、坦克天生承傷多，可以對照「出裝比例」"
     >
       {loading ? (
         <Skeleton className="h-[300px] w-full" />
@@ -1720,9 +1768,26 @@ function StatsPanel({
                           <td
                             key={c.key}
                             data-key={c.key}
-                            className={cn("px-2 py-1.5 text-right font-mono tabular-nums", v !== null && v === best.get(c.key) && "font-semibold text-win")}
+                            className={cn(
+                              "px-2 py-1.5 text-right font-mono tabular-nums",
+                              v !== null && v === best.get(c.key) && "font-semibold text-win",
+                              drill?.puuid === p.puuid && drill.key === c.key && "bg-primary/10",
+                            )}
                           >
-                            {v === null ? "—" : c.fmt(v)}
+                            {v === null ? (
+                              "—"
+                            ) : (
+                              <button
+                                type="button"
+                                title={`看${splitId(p.riot_id, p.puuid).name}算進「${c.label}」的每一場`}
+                                onClick={() =>
+                                  setDrill((cur) => (cur?.puuid === p.puuid && cur.key === c.key ? null : { puuid: p.puuid, key: c.key, label: c.label }))
+                                }
+                                className="cursor-pointer rounded px-0.5 underline-offset-2 transition hover:bg-accent hover:underline"
+                              >
+                                {c.fmt(v)}
+                              </button>
+                            )}
                             {(c.key === "participants.avg_time_dead" || c.key === "participants.time_dead_share") && v !== null && (
                               <span className="ml-1 text-[10px] font-normal text-muted-foreground">{n0(r, "participants.time_dead_games")} 場</span>
                             )}
@@ -1735,6 +1800,38 @@ function StatsPanel({
               </tbody>
             </table>
           </div>
+          {drill && (
+            <div className="space-y-2 border-t pt-3" data-testid="crew-stats-drill">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <div className="text-sm font-semibold">
+                  {splitId(people.find((x) => x.puuid === drill.puuid)?.riot_id ?? "", drill.puuid).name}・{drill.label}的每一場
+                </div>
+                <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setDrill(null)}>
+                  收起
+                </Button>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                {drill.key.startsWith("mix:")
+                  ? drill.key === "mix:AD"
+                    ? "出裝傷害類型是 AD 的場次"
+                    : `出裝是${drill.key.slice(4)}的場次`
+                  : drill.key.includes("time_dead")
+                    ? "這一欄只算有賽後統計的場次；下面列出範圍內全部的場次，舊場次沒有死亡時間"
+                    : "這一欄是下面這些場次的平均"}
+              </p>
+              <PlayerMatches
+                key={`${drill.puuid}|${drill.key}`}
+                puuid={drill.puuid}
+                filters={
+                  drill.key === "mix:AD"
+                    ? [{ member: "builds.damage_type", operator: "equals", values: ["AD"] }]
+                    : drill.key.startsWith("mix:")
+                      ? [{ member: "builds.build_role", operator: "equals", values: [drill.key.slice(4)] }]
+                      : []
+                }
+              />
+            </div>
+          )}
         </div>
       )}
     </Panel>
@@ -1999,7 +2096,7 @@ export function Crew() {
                 一次比二十隻，總有一兩隻看起來特別好或特別差只是運氣。
               </p>
               <p>
-                勝率只當補充：和他自己的整體勝率比，範圍也整段在一邊寫「勝率明顯高／低」，差 15 個百分點以上但還在誤差內寫「勝率偏高／偏低」；表現強勢但勝率明顯低是「非戰之罪」，表現不強勢但勝率明顯高是「靠隊友」。
+                勝率只當補充：和他自己的整體勝率比，範圍也整段在一邊寫「勝率明顯高／低」，差 15 個百分點以上但還在誤差內寫「勝率偏高／偏低」；表現比同類型好（強勢或偏強）、勝率卻比他平常低 {WR_LUCK} 個百分點以上（至少 {LUCK_MIN} 場）是「非戰之罪」：輸多半不是他的問題；反過來表現差、勝率卻高是「靠隊友」。
                 好友多半一起打、勝率互相牽動，每個人的整體勝率目前都和 50% 分不出差別，所以不拿勝率判斷。
               </p>
               <p>
