@@ -256,6 +256,10 @@ views:
             alias: performance_survival
           - name: perf_kp
             alias: performance_kill_participation
+          - name: perf_minion
+            alias: performance_minion_clear
+          - name: perf_obj
+            alias: performance_objective
           - name: perf_cc
             alias: performance_cc
           - name: perf_heal

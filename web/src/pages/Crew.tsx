@@ -709,8 +709,8 @@ const STYLE_MIN = 20
 const AXES = [
   { key: "contribution.perf_dmg", label: "輸出", up: "輸出高", down: "輸出偏低" },
   { key: "contribution.perf_soak", label: "承傷", up: "很耐打", down: "扛不住" },
-  { key: "contribution.perf_surv", label: "存活", up: "很少死", down: "常陣亡" },
-  { key: "contribution.perf_kp", label: "參團", up: "常參團", down: "參團少" },
+  { key: "contribution.perf_minion", label: "清兵", up: "清兵多", down: "清兵少" },
+  { key: "contribution.perf_obj", label: "推塔", up: "常拆塔", down: "很少拆塔" },
   { key: "contribution.perf_cc", label: "控場", up: "控場多", down: "控場少" },
   { key: "contribution.perf_heal", label: "治療護盾", up: "常補血護盾", down: "補給少" },
 ] as const
@@ -792,27 +792,28 @@ function playStyleOf(
   if (scored >= STYLE_MIN) {
     const ups = axes.filter((a) => a.value !== null && a.value >= 50 + AXIS_LEAN)
     const downs = axes.filter((a) => a.value !== null && a.value <= 50 - AXIS_LEAN)
-    if (v("存活") <= 44 && Math.max(v("承傷"), v("輸出")) >= 54) {
-      archetype = "衝鋒型"
-      archetypeNote = "常衝在前面：輸出或承傷做得比同類型多，但陣亡也比較多"
-    } else if (v("存活") >= 56 && v("輸出") >= 54) {
-      archetype = "穩健輸出型"
-      archetypeNote = "輸出高、又死得少"
+    // 輸出、承傷都是「每條命」的量，死得多會直接拉低這兩項，所以不再另外看存活
+    if (ups.length >= 3) {
+      archetype = "全面型"
+      archetypeNote = "好幾項都比同類型多，沒有明顯的洞"
+    } else if (v("推塔") >= 57) {
+      archetype = "推進型"
+      archetypeNote = "拆塔比同類型多：團戰贏了會把優勢換成塔"
+    } else if (v("輸出") >= 57) {
+      archetype = "輸出型"
+      archetypeNote = "每條命打出的傷害比同類型多"
+    } else if (v("承傷") >= 57) {
+      archetype = "前排型"
+      archetypeNote = "每條命扛下的傷害比同類型多"
     } else if (v("控場") >= 57) {
       archetype = "控場型"
       archetypeNote = "控制敵人的時間比同類型多"
-    } else if (v("參團") >= 57) {
-      archetype = "團戰型"
-      archetypeNote = "隊上的擊殺大多有他的份"
-    } else if (ups.length >= 3) {
-      archetype = "全面型"
-      archetypeNote = "好幾項都比同類型多，沒有明顯的洞"
-    } else if (v("存活") >= 52 && v("輸出") <= 42) {
-      archetype = "保守型"
-      archetypeNote = "死得不多，但輸出也比同類型少：可能站得比較後面"
+    } else if (v("清兵") >= 57) {
+      archetype = "清線型"
+      archetypeNote = "清兵比同類型多"
     } else if (!ups.length && !downs.length) {
       archetype = "均衡型"
-      archetypeNote = "輸出、承傷、存活、參團、控場都和同類型的中位數差不多"
+      archetypeNote = "輸出、承傷、清兵、推塔、控場都和同類型的中位數差不多"
     }
   }
   return {
@@ -1210,7 +1211,7 @@ function PlayerDrawerBody({
         </div>
         <div className="mb-2 text-[11px] text-muted-foreground">
           每一項都是每分鐘的實際數值，和「同類型」（出裝定位 × 英雄官方主定位）、同時長帶的人比，換成名次百分位：50＝同類型的中位數，雷達裡的虛線圈與橫條中間的刻度就是 50。
-          依出裝定位加權：輸出位重輸出與存活；坦克的本職是承傷、參團、控場、存活，輔助是參團、控場、存活、治療護盾，輸出（輔助另加承傷）超過同類型中位數的部分再額外加分、低於不扣。
+          輸出、承傷都是「每條命」的量（除以死亡＋1），送頭換來的數字不加分。依出裝定位加權：輸出位重輸出與推塔；坦克的本職是承傷、控場、推塔、清兵，輔助是控場、治療護盾、推塔、清兵，輸出（輔助另加承傷）超過同類型中位數的部分再額外加分、低於不扣。
           治療與護盾隊友的量只有開始擷取賽後統計之後的場次才有
         </div>
         {!settled || contrib.loading ? (
@@ -2064,8 +2065,8 @@ export function Crew() {
             </div>
             <HowWeJudge>
               <p>
-                當局表現分：輸出、承傷、存活、參團、控場（有治療或護盾隊友時再加治療護盾）每分鐘的實際數值，各自和同類型（出裝定位 × 英雄官方主定位）、同時長帶的人比成百分位，
-                再依出裝定位加權；50 是同類型的中位數。輸出位重輸出與存活；坦克、輔助先算本職（坦克：承傷、參團、控場、存活；輔助：參團、控場、存活、治療護盾），拉成同一把尺後，輸出（輔助另加承傷）超過同類型中位數的部分再額外加分、低於不扣——坦克、輔助打出好輸出會往上跳。
+                當局表現分：輸出（每條命的對英雄傷害）、承傷（每條命扛下的傷害）、清兵、推塔、控場（有治療或護盾隊友時再加治療護盾），各自和同類型（出裝定位 × 英雄官方主定位）、同時長帶的人比成百分位；輸出、承傷除以死亡＋1，送頭換來的數字不加分，
+                再依出裝定位加權；50 是同類型的中位數。輸出位重輸出與推塔；坦克、輔助先算本職（坦克：承傷、控場、推塔、清兵；輔助：控場、治療護盾、推塔、清兵），拉成同一把尺後，輸出（輔助另加承傷）超過同類型中位數的部分再額外加分、低於不扣——坦克、輔助打出好輸出會往上跳。
                 不用擊殺、金錢、勝負計算；也不看隊友分走多少（以前用的「隊內排名」是零和的，和強的朋友同隊就會被壓低）。
               </p>
               <p>

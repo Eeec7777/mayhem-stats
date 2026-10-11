@@ -26,10 +26,10 @@ export const CONTRIB_MEASURES = ["contribution.score", ...CONTRIB_PARTS.map((c) 
 
 /** 表現分的六項，順序與 CONTRIB_PARTS 相同；比的是每分鐘的實際數值，不看隊友占了多少 */
 export const PERF_PARTS = [
-  { key: "contribution.perf_dmg", label: "輸出", hint: "每分鐘對英雄傷害" },
+  { key: "contribution.perf_dmg", label: "輸出", hint: "每條命的傷害：對英雄傷害 ÷（死亡＋1），送頭換來的傷害不加分" },
   { key: "contribution.perf_soak", label: "承傷", hint: "扛傷效率：每死一次之前扛了多少傷害（承受＋自身減免）÷（死亡＋1）" },
-  { key: "contribution.perf_surv", label: "存活", hint: "每分鐘死亡，越少越好（分數越高代表死得越少）" },
-  { key: "contribution.perf_kp", label: "參團", hint: "(擊殺＋助攻) / 隊伍擊殺" },
+  { key: "contribution.perf_minion", label: "清兵", hint: "每分鐘對小兵的傷害（估計＝總輸出 − 對英雄 − 對建築）" },
+  { key: "contribution.perf_obj", label: "推塔", hint: "每分鐘對建築的傷害（有一半是結果：贏的一隊才拆得到塔）" },
   { key: "contribution.perf_cc", label: "控場", hint: "每分鐘控制敵人的時間" },
   { key: "contribution.perf_heal", label: "治療護盾", hint: "每分鐘有效治療＋護盾隊友，只在有治療或護盾隊友的場次計（舊場次沒有護盾的量，改用含自補的治療量）" },
 ] as const

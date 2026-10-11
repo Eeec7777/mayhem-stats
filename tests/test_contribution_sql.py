@@ -58,9 +58,9 @@ class Fixture:
         c.commit()
 
     def result(self):
-        cols = ["rid", "p_heal", "heal_src", "score", "perf", "pa_dmg", "pa_surv", "pa_kp", "pa_cc"]
+        cols = ["rid", "p_heal", "heal_src", "score", "perf", "pa_dmg", "pa_surv", "pa_kp", "pa_cc", "pa_soak", "pa_minion", "pa_obj"]
         out = {}
-        for row in self.conn.execute(f"SELECT participant_rowid, p_heal, heal_src, score, perf, pa_dmg, pa_surv, pa_kp, pa_cc FROM ({SQL})"):
+        for row in self.conn.execute(f"SELECT participant_rowid, p_heal, heal_src, score, perf, pa_dmg, pa_surv, pa_kp, pa_cc, pa_soak, pa_minion, pa_obj FROM ({SQL})"):
             out[row[0]] = dict(zip(cols, row))
         return out
 
@@ -177,12 +177,12 @@ class PerformanceScoreTests(unittest.TestCase):
         for g in (1, 2, 3):
             self.fx.game(g)
         res = self.fx.result()
-        # 現行法師權重為 50/20/15/15；加權後依比較池校準到平均 50、標準差 20。
+        # 現行法師權重為輸出 45、清兵 15、推塔 20、控場 15（2026-10-11 起沒有存活、參團）；加權後依比較池校準到平均 50、標準差 20。
         # 全部合成玩家都屬同一比較池，使用獨立 Python 計算核對。
         raw = {}
         for rid, r in res.items():
             present = [(weight, r[key]) for weight, key in
-                       ((50, "pa_dmg"), (20, "pa_surv"), (15, "pa_kp"), (15, "pa_cc")) if r[key] is not None]
+                       ((45, "pa_dmg"), (0, "pa_soak"), (15, "pa_minion"), (20, "pa_obj"), (15, "pa_cc")) if r[key] is not None]
             raw[rid] = round(sum(weight * value for weight, value in present) / sum(weight for weight, _ in present), 9)
         mean = statistics.mean(raw.values())
         spread = statistics.pstdev(raw.values())
