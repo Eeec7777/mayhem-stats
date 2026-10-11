@@ -416,8 +416,8 @@ const verdictText = (g: { interval: [number, number] | null }, v: string) => (g.
 /** 五人組成：出裝定位取第一個字，順序同語意層 comp_context.team_lineup 的字串（坦鬥刺射法輔未） */
 const LINEUP_CLASSES = [
   { ch: "坦", label: "坦克", hint: "出裝是坦克", tone: "border-role-util/70" },
-  { ch: "鬥", label: "鬥士", hint: "坦度裝約一半、傷害裝約一半（AD 或 AP）", tone: "border-muted-foreground/60" },
-  { ch: "刺", label: "刺客", hint: "要貼身切入的輸出：穿甲型 AD、近戰英雄出 AD 輸出裝（犽宿、易大師）、AP 刺客（艾克、飛斯）", tone: "border-dashed border-muted-foreground/70" },
+  { ch: "鬥", label: "鬥士", hint: "坦度裝約一半、傷害裝約一半，或鬥士英雄出 AD 輸出裝（剛普朗克、趙信、犽宿）", tone: "border-muted-foreground/60" },
+  { ch: "刺", label: "刺客", hint: "進場秒人的輸出：穿甲型 AD（劫、塔隆）、官方刺客出輸出裝（卡特蓮娜、艾克、飛斯）", tone: "border-dashed border-muted-foreground/70" },
   { ch: "射", label: "射手", hint: "AD 輸出裝、英雄有官方射手定位", tone: "border-role-ad/70" },
   { ch: "法", label: "法師", hint: "AP 輸出裝（不是刺客）", tone: "border-role-ap/70" },
   { ch: "輔", label: "輔助", hint: "出輔助裝", tone: "border-role-util/70" },
@@ -503,7 +503,7 @@ function LineupFive({ who, scope }: { who: Who; scope: WhoScope }) {
   return (
     <Panel
       title="五人組成：五個人分別是什麼"
-      caption="每個人的出裝定位：坦克、鬥士、刺客（含近戰英雄出 AD 輸出裝）、射手（有官方射手定位的英雄出 AD 輸出裝）、法師、輔助。判定看「所有隊伍」（每場兩隊都算）；區間已依一次比幾列放寬，整段在 50% 同一邊才寫強勢／不強勢"
+      caption="每個人的出裝定位：坦克、鬥士（含鬥士英雄出 AD 輸出裝）、刺客、射手（有官方射手定位的英雄出 AD 輸出裝）、法師、輔助。判定看「所有隊伍」（每場兩隊都算）；區間已依一次比幾列放寬，整段在 50% 同一邊才寫強勢／不強勢"
     >
       {loading ? (
         <Skeleton className="h-[420px] w-full" />

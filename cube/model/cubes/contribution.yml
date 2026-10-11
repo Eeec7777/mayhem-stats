@@ -38,10 +38,10 @@ cubes:
   # 綜合貢獻＝各軸百分位依出裝定位加權平均（權重在下面 weights，缺值的軸不算、權重重新分配），
   # 再在同類型內取一次名次百分位。權重是判斷不是估出來的，各自隨機 ±30% 排名相關仍 ≥ 0.99。
   #   射手・法師   輸出 50、存活 20、參團 15、控場 15
-  #   刺客         輸出 45、存活 20、參團 15、控場 15、承傷 5（近戰英雄出輸出裝也在這類，要貼身打會吃一點傷害）
+  #   刺客         輸出 45、存活 20、參團 15、控場 15、承傷 5（要貼身進場，會吃一點傷害）
   #   鬥士         輸出 30、承傷 20、存活 15、參團 15、控場 15
-  #   坦克         承傷 25、參團 20、控場 20、輸出 20、存活 15
-  #   輔助         參團 25、控場 25、存活 20、輸出 15、承傷 5
+  #   坦克         本職：承傷 30、參團 25、控場 25、存活 20；加分：輸出 0.5、治療護盾 0.3（超過中位數的部分才加，見 weights）
+  #   輔助         本職：參團 30、控場 30、存活 20、治療護盾 20；加分：輸出 0.5、承傷 0.3
   #   （2026-10-11 坦克、鬥士、輔助的輸出加重、承傷減輕：坦克、輔助打出好輸出也要看得出來；承傷軸同時改成扛傷效率，見下）
   #   （2026-10-10 控場從 10 調到 15、從輸出扣：使用者的判斷，帶控場的輸出位做的是同樣重要的工作。
   #     2026-10-11 出裝定位收斂成六類，合併的類別取原本權重的中間值）
@@ -221,13 +221,20 @@ cubes:
               CASE WHEN p_ally IS NOT NULL THEN 'eog' WHEN NOT (has_eog = 1 AND m_ally IS NULL) AND p_heal_old IS NOT NULL THEN 'flag' END AS heal_src
             FROM ranked
           ),
-          weights(build_role, w_dmg, w_soak, w_surv, w_kp, w_cc, w_heal) AS (
-            VALUES ('坦克', 20, 25, 15, 20, 20, 10),
-                   ('鬥士', 30, 20, 15, 15, 15, 10),
-                   ('刺客', 45, 5, 20, 15, 15, 5),
-                   ('射手', 50, 0, 20, 15, 15, 5), ('法師', 50, 0, 20, 15, 15, 5),
-                   ('輔助', 15, 5, 20, 25, 25, 20),
-                   ('未成形', 1, 1, 1, 1, 1, 5)
+          -- w_*：加權平均的權重（合起來算 100%）。k_*：加分係數，只有坦克、輔助有——
+          --   這幾項不算進 100%，而是「超過同類型中位數的部分」乘上係數直接加上去，低於中位數不扣分。
+          --   為什麼（2026-10-11 使用者的要求）：坦克、輔助的本職是扛傷、開團、保人，打出好輸出是「額外的」貢獻；
+          --   放在 100% 裡當一項，輸出好就會擠掉本職的份量、本職好又被平平的輸出拉低，坦克打出好輸出也不亮眼。
+          --   坦克：本職＝承傷 30、存活 20、參團 25、控場 25；加分＝輸出 0.5、治療護盾 0.3（再乘分量）
+          --   輔助：本職＝參團 30、控場 30、存活 20、治療護盾 20；加分＝輸出 0.5、承傷 0.3
+          --   例：坦克輸出在同類型前 10%（百分位 90）→ 加 0.5 × (90 − 50) = 20 分。
+          weights(build_role, w_dmg, w_soak, w_surv, w_kp, w_cc, w_heal, k_dmg, k_soak, k_heal) AS (
+            VALUES ('坦克', 0, 30, 20, 25, 25, 0, 0.5, 0, 0.3),
+                   ('鬥士', 30, 20, 15, 15, 15, 10, 0, 0, 0),
+                   ('刺客', 45, 5, 20, 15, 15, 5, 0, 0, 0),
+                   ('射手', 50, 0, 20, 15, 15, 5, 0, 0, 0), ('法師', 50, 0, 20, 15, 15, 5, 0, 0, 0),
+                   ('輔助', 0, 0, 20, 30, 30, 20, 0.5, 0.3, 0),
+                   ('未成形', 1, 1, 1, 1, 1, 5, 0, 0, 0)
           ),
           combined AS (
             SELECT k.*,
@@ -235,18 +242,25 @@ cubes:
               ROUND((COALESCE(k.p_dmg, 0) * COALESCE(w.w_dmg, 1) + COALESCE(k.p_soak, 0) * COALESCE(w.w_soak, 1) + COALESCE(k.p_surv, 0) * COALESCE(w.w_surv, 1)
                + COALESCE(k.p_kp, 0) * COALESCE(w.w_kp, 1) + COALESCE(k.p_cc, 0) * COALESCE(w.w_cc, 1) + COALESCE(k.p_heal, 0) * COALESCE(w.w_heal, 5) * k.heal_k)
               / NULLIF((k.p_dmg IS NOT NULL) * COALESCE(w.w_dmg, 1) + (k.p_soak IS NOT NULL) * COALESCE(w.w_soak, 1) + (k.p_surv IS NOT NULL) * COALESCE(w.w_surv, 1)
-                       + (k.p_kp IS NOT NULL) * COALESCE(w.w_kp, 1) + (k.p_cc IS NOT NULL) * COALESCE(w.w_cc, 1) + (k.p_heal IS NOT NULL) * COALESCE(w.w_heal, 5) * k.heal_k, 0), 9) AS comp,
+                       + (k.p_kp IS NOT NULL) * COALESCE(w.w_kp, 1) + (k.p_cc IS NOT NULL) * COALESCE(w.w_cc, 1) + (k.p_heal IS NOT NULL) * COALESCE(w.w_heal, 5) * k.heal_k, 0)
+               -- 加分（坦克、輔助）：超過中位數的部分乘上係數，低於不扣
+               + COALESCE(w.k_dmg, 0) * MAX(0, COALESCE(k.p_dmg, 50) - 50) + COALESCE(w.k_soak, 0) * MAX(0, COALESCE(k.p_soak, 50) - 50)
+               + COALESCE(w.k_heal, 0) * k.heal_k * MAX(0, COALESCE(k.p_heal, 50) - 50), 9) AS comp,
               -- 當局表現分：同樣的權重，加權平均絕對表現的百分位，不再重新排名——全隊都打得好就可以全隊都高於 50
               ROUND((COALESCE(k.pa_dmg, 0) * COALESCE(w.w_dmg, 1) + COALESCE(k.pa_soak, 0) * COALESCE(w.w_soak, 1) + COALESCE(k.pa_surv, 0) * COALESCE(w.w_surv, 1)
                + COALESCE(k.pa_kp, 0) * COALESCE(w.w_kp, 1) + COALESCE(k.pa_cc, 0) * COALESCE(w.w_cc, 1) + COALESCE(k.pa_heal, 0) * COALESCE(w.w_heal, 5) * k.heal_k)
               / NULLIF((k.pa_dmg IS NOT NULL) * COALESCE(w.w_dmg, 1) + (k.pa_soak IS NOT NULL) * COALESCE(w.w_soak, 1) + (k.pa_surv IS NOT NULL) * COALESCE(w.w_surv, 1)
-                       + (k.pa_kp IS NOT NULL) * COALESCE(w.w_kp, 1) + (k.pa_cc IS NOT NULL) * COALESCE(w.w_cc, 1) + (k.pa_heal IS NOT NULL) * COALESCE(w.w_heal, 5) * k.heal_k, 0), 9) AS perf_raw
+                       + (k.pa_kp IS NOT NULL) * COALESCE(w.w_kp, 1) + (k.pa_cc IS NOT NULL) * COALESCE(w.w_cc, 1) + (k.pa_heal IS NOT NULL) * COALESCE(w.w_heal, 5) * k.heal_k, 0), 9) AS perf_raw,
+              -- 表現分的加分另外算：本職先拉成同一把尺，加分再直接疊上去（見 scaled）
+              ROUND(COALESCE(w.k_dmg, 0) * MAX(0, COALESCE(k.pa_dmg, 50) - 50) + COALESCE(w.k_soak, 0) * MAX(0, COALESCE(k.pa_soak, 50) - 50)
+               + COALESCE(w.k_heal, 0) * k.heal_k * MAX(0, COALESCE(k.pa_heal, 50) - 50), 9) AS perf_bonus
             FROM healed k LEFT JOIN weights w ON w.build_role = k.build_role
           ),
           spread AS (
             SELECT *,
               AVG(perf_raw) OVER (PARTITION BY queue_id, acell) AS perf_avg,
-              AVG(perf_raw * perf_raw) OVER (PARTITION BY queue_id, acell) AS perf_sq
+              AVG(perf_raw * perf_raw) OVER (PARTITION BY queue_id, acell) AS perf_sq,
+              AVG(perf_bonus) OVER (PARTITION BY queue_id, acell) AS bonus_avg
             FROM combined
           ),
           scaled AS (
@@ -254,10 +268,13 @@ cubes:
             -- 為什麼：加權平均的離散程度看權重怎麼分——輸出位幾乎只看輸出一軸（標準差 20.7），坦克、輔助的工作分散在
             -- 承傷／參團／控場幾個不太相關的軸上（17.8／15.0），結果坦克、輔助打得再好分數也上不去（P90 74／71 vs 79），
             -- 每隊最高分是坦克的只有應有的 0.73 倍、輔助 0.41 倍。拉成同一把尺後「同類型裡打得一樣出色」就是同一個分數。
+            -- 坦克、輔助的加分在拉尺之後直接疊上去，再扣掉比較對象的平均加分（所以平均仍是 50）：
+            -- 不再壓回標準差 20，輸出好的坦克才會真的往上跳（輸出前 20% 的坦克平均 68→73，每隊最高分是坦克 0.82→0.92 倍、輔助 0.48→0.70 倍）。
+            -- 代價：坦克、輔助的標準差變成約 24（其他出裝 20）。
             SELECT *,
               CASE WHEN perf_raw IS NULL THEN NULL
                    WHEN perf_sq - perf_avg * perf_avg <= 1e-9 THEN 50.0
-                   ELSE ROUND(MIN(100.0, MAX(0.0, 50.0 + 20.0 * (perf_raw - perf_avg) / SQRT(perf_sq - perf_avg * perf_avg))), 9) END AS perf
+                   ELSE ROUND(MIN(100.0, MAX(0.0, 50.0 + 20.0 * (perf_raw - perf_avg) / SQRT(perf_sq - perf_avg * perf_avg) + perf_bonus - bonus_avg)), 9) END AS perf
             FROM spread
           )
           SELECT participant_rowid, build_role, cell, p_dmg, p_soak, p_surv, p_kp, p_cc, p_heal, heal_src,
