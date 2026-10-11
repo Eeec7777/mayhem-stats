@@ -82,6 +82,29 @@ export default function App() {
     return () => window.removeEventListener("popstate", onPopState)
   }, [])
   useEffect(() => {
+    // 已經開著的分頁不會自己換成新版程式：資料（語意層、mat_* 表）跟著服務更新了，畫面上卻還是舊版的程式，
+    // 兩邊的定義對不上（例：出裝定位從九類收斂成六類後，舊程式找不到「AD 鬥士」，雷達上全變成「沒打過」）。
+    // 所以資料一變、重新連線或切回這個分頁時，比一下伺服器上 index.html 引用的主程式檔名，換了就重新載入。
+    const checkBuild = () => {
+      const current = document.querySelector<HTMLScriptElement>('script[type="module"][src*="/assets/index-"]')?.getAttribute("src")
+      if (!current) return // 開發模式（vite）沒有建置檔名
+      fetch("/", { cache: "no-store" })
+        .then((r) => (r.ok ? r.text() : ""))
+        .then((html) => {
+          const latest = html.match(/\/assets\/index-[\w-]+\.js/)?.[0]
+          if (latest && !current.endsWith(latest)) window.location.reload()
+        })
+        .catch(() => {})
+    }
+    const onVisible = () => document.visibilityState === "visible" && checkBuild()
+    document.addEventListener("visibilitychange", onVisible)
+    window.addEventListener("mayhem:data-changed", checkBuild)
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible)
+      window.removeEventListener("mayhem:data-changed", checkBuild)
+    }
+  }, [])
+  useEffect(() => {
     const stream = new EventSource("/api/events")
     let opened = false
     stream.onopen = () => {

@@ -752,9 +752,11 @@ def index():
     只有要改前端時才需要進 web/ 跑 npm run build。
     """
     built = WEB_DIST / "index.html"
+    # no-cache：index.html 沒有雜湊檔名，不帶這個標頭時瀏覽器會依 last-modified 自己猜要快取多久，
+    # 改版後重新整理還可能拿到舊的 index.html、載入舊版程式（assets/ 有雜湊檔名，可以長期快取）
     if built.is_file():
-        return FileResponse(built)
-    return FileResponse(BASE_DIR / "index.html")
+        return FileResponse(built, headers={"Cache-Control": "no-cache"})
+    return FileResponse(BASE_DIR / "index.html", headers={"Cache-Control": "no-cache"})
 
 
 # dist 根目錄的圖示（index.html 的分頁圖示引用 /favicon.svg）。只開這兩個固定檔名，
