@@ -289,9 +289,9 @@ function MiniHex({ data, total, size = 96 }: { data: HexDatum[]; total: number; 
  *  同一個坦克一邊寫偏強、一邊是紅字，看起來像數字對不上。 */
 function RoleHex({ roles, total, selected, onPick }: { roles: Judged[]; total: number; selected: string | null; onPick: (label: string) => void }) {
   const W = 420
-  const H = 300
+  const H = 320 // 標籤三行（名稱、表現分・場次、勝率），底下那個頂點要多留空間
   const cx = W / 2
-  const cy = H / 2 + 4
+  const cy = H / 2 + 2
   const r = 92
   const n = roles.length
   const at = (i: number, frac: number) => {
@@ -345,6 +345,11 @@ function RoleHex({ roles, total, selected, onPick }: { roles: Judged[]; total: n
             <text x={lx} y={ly + 9} textAnchor="middle" dominantBaseline="central" className="fill-muted-foreground font-mono text-[11px]">
               {j.games ? `${j.score === null ? "—" : Math.round(j.score)}・${j.games} 場` : "沒打過"}
             </text>
+            {j.games > 0 && j.winrate !== null && (
+              <text x={lx} y={ly + 23} textAnchor="middle" dominantBaseline="central" className="fill-muted-foreground font-mono text-[11px]">
+                勝率 {Math.round(j.winrate)}%
+              </text>
+            )}
           </g>
         )
       })}
@@ -1141,7 +1146,7 @@ function PlayerDrawerBody({
               <div className="text-sm font-semibold">各出裝</div>
             </div>
             <div className="text-[11px] text-muted-foreground">
-              形狀是各出裝佔他場次的比例；顏色和一覽表一樣是表現分的判定，標籤下是表現分・場次。點一種出裝看他用它玩過的英雄
+              形狀是各出裝佔他場次的比例；顏色和一覽表一樣是表現分的判定，標籤下是表現分・場次與勝率。點一種出裝看他用它玩過的英雄
             </div>
             <RoleHex roles={profile.roles} total={ov.games} selected={role} onPick={(r) => pickRole(r)} />
           </div>
