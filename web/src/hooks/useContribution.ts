@@ -26,8 +26,8 @@ export const CONTRIB_MEASURES = ["contribution.score", ...CONTRIB_PARTS.map((c) 
 
 /** 表現分的六項，順序與 CONTRIB_PARTS 相同；比的是每分鐘的實際數值，不看隊友占了多少 */
 export const PERF_PARTS = [
-  { key: "contribution.perf_dmg", label: "輸出", hint: "每條命的傷害：對英雄傷害 ÷（死亡＋1），送頭換來的傷害不加分" },
-  { key: "contribution.perf_soak", label: "承傷", hint: "扛傷效率：每死一次之前扛了多少傷害（承受＋自身減免）÷（死亡＋1）" },
+  { key: "contribution.perf_dmg", label: "輸出", hint: "考慮死亡的傷害：對英雄傷害 ÷ √（死亡＋1），死得多會打折" },
+  { key: "contribution.perf_soak", label: "承傷", hint: "扛傷效率：（承受＋自身減免）÷ √（死亡＋1），死得多會打折" },
   { key: "contribution.perf_minion", label: "清兵", hint: "每分鐘對小兵的傷害（估計＝總輸出 − 對英雄 − 對建築）" },
   { key: "contribution.perf_obj", label: "推塔", hint: "每分鐘對建築的傷害（有一半是結果：贏的一隊才拆得到塔）" },
   { key: "contribution.perf_cc", label: "控場", hint: "每分鐘控制敵人的時間" },
