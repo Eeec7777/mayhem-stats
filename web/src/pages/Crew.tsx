@@ -352,7 +352,7 @@ function RoleHex({ roles, total, selected, onPick }: { roles: Judged[]; total: n
   )
 }
 
-/** 出裝定位的判定標籤：「1 強勢 AD 輸出」，實心是看得出的、虛線框是還在誤差內 */
+/** 出裝定位的判定標籤：「1 強勢 射手」，實心是看得出的、虛線框是還在誤差內 */
 function RoleChips({ items, ownWr }: { items: Judged[]; ownWr: number | null }) {
   if (!items.length) return <span className="text-[11px] text-muted-foreground">—</span>
   return (
@@ -685,22 +685,27 @@ type PlayStyle = {
   axes: { label: string; value: number | null; up: string; down: string }[]
 }
 
-function playStyleOf(roles: Judged[], champs: Judged[], sum: CubeRow | undefined, base: Map<string, number>, scored: number): PlayStyle {
+function playStyleOf(
+  roles: Judged[],
+  champs: Judged[],
+  sum: CubeRow | undefined,
+  base: Map<string, number>,
+  scored: number,
+  dmgGames: { ad: number; ap: number },
+): PlayStyle {
   const total = roles.reduce((a, j) => a + j.games, 0)
   const share = (labels: string[]) => (total ? roles.filter((j) => labels.includes(j.label)).reduce((a, j) => a + j.games, 0) / total : 0)
-  // 四大類：後排（射手、法師）、前排（坦克、鬥士）、近戰／刺客、輔助。最大的一類占 45% 以上才說他是那一類，
+  // 四大類：後排（射手、法師）、前排（坦克、鬥士）、刺客、輔助。最大的一類占 45% 以上才說他是那一類，
   // 後排再看射手、法師哪個占後排的三分之二以上；都不到就是「什麼位置都玩」，附上最常的出裝
   const adc = share(["射手"])
-  const mage = share(["AP 輸出"])
+  const mage = share(["法師"])
   const groups = [
     { name: "back", v: adc + mage },
-    { name: "front", v: share(["坦克", "AD 鬥士", "AP 鬥士"]) },
-    { name: "dive", v: share(["AD 刺客", "AP 刺客", "AD 近戰"]) },
+    { name: "front", v: share(["坦克", "鬥士"]) },
+    { name: "dive", v: share(["刺客"]) },
     { name: "support", v: share(["輔助"]) },
   ].sort((x, y) => y.v - x.v)
-  const ad = share(["射手", "AD 近戰", "AD 刺客", "AD 鬥士"])
-  const ap = share(["AP 輸出", "AP 刺客", "AP 鬥士"])
-  const adShare = ad + ap > 0 ? ad / (ad + ap) : null
+  const adShare = dmgGames.ad + dmgGames.ap > 0 ? dmgGames.ad / (dmgGames.ad + dmgGames.ap) : null
   const dmg = adShare === null ? "" : adShare >= 0.62 ? "AD " : adShare <= 0.38 ? "AP " : ""
   const topRole = [...roles].sort((x, y) => y.games - x.games)[0]
   const main = groups[0]
@@ -716,7 +721,7 @@ function playStyleOf(roles: Judged[], champs: Judged[], sum: CubeRow | undefined
         : main.name === "front"
           ? `${dmg}前排（坦克／鬥士）`
           : main.name === "dive"
-            ? `${dmg}近戰／刺客`
+            ? `${dmg}刺客`
             : "輔助"
   const mix = roles
     .filter((j) => j.games > 0)
@@ -813,7 +818,7 @@ function StyleCard({ style, scored }: { style: PlayStyle; scored: number }) {
           )}
         </dd>
         <dt className="text-muted-foreground">AD／AP</dt>
-        <dd>{style.adShare === null ? "—" : `AD 裝 ${pct0(style.adShare)}、AP 裝 ${pct0(1 - style.adShare)}（坦克與輔助不算）`}</dd>
+        <dd>{style.adShare === null ? "—" : `AD 裝 ${pct0(style.adShare)}、AP 裝 ${pct0(1 - style.adShare)}（兩種傷害裝都沒買的純坦、純輔助不算）`}</dd>
         <dt className="text-muted-foreground">英雄池</dt>
         <dd>
           玩過 {style.champCount} 隻，最常玩的 5 隻占 <span className="font-mono tabular-nums">{pct0(style.top5Share)}</span>
@@ -1537,104 +1542,194 @@ const AUGMENT_LOOKUP: LookupKind = {
   iconKey: "augments.icon_path",
 }
 
-// ── 推塔與清兵：誰比較常拆塔、清兵 ─────────────────────────────────────────
-// 大亂鬥靠團戰贏了之後推塔決勝（91% 的建築由前一場團戰的贏家拆），所以「拆塔」是把優勢換成勝利的那一步。
-// 對小兵傷害對局資料沒有，用「總輸出 − 對英雄 − 對建築」估計（語意層 participants.minion_damage_per_min）。
-const PUSH_COLS = [
-  { key: "participants.objective_damage_share", label: "建築傷害佔全隊", fmt: (v: number) => `${v.toFixed(1)}%`, hint: "對建築的傷害佔我方全隊的比例，每場先算再平均。最能看出「隊上誰在拆塔」" },
-  { key: "participants.objective_damage_per_min", label: "每分鐘建築傷害", fmt: (v: number) => Math.round(v).toLocaleString(), hint: "對防禦塔、兵營、主堡的傷害，每分鐘" },
-  { key: "participants.avg_turret_kills", label: "每場推塔", fmt: (v: number) => v.toFixed(2), hint: "每場親手摧毀（最後一擊）的防禦塔數" },
-  { key: "participants.total_turret_kills", label: "推塔總數", fmt: (v: number) => String(Math.round(v)), hint: "範圍內親手摧毀的防禦塔總數（場次多的人自然多）" },
-  { key: "participants.avg_inhibitor_kills", label: "每場兵營", fmt: (v: number) => v.toFixed(2), hint: "每場親手摧毀的兵營數" },
-  { key: "participants.minion_damage_per_min", label: "每分鐘小兵傷害", fmt: (v: number) => Math.round(v).toLocaleString(), hint: "估計值：總輸出 − 對英雄傷害 − 對建築傷害（大亂鬥沒有野怪，剩下的幾乎都是小兵）" },
-  { key: "participants.cs_per_min", label: "每分鐘補兵", fmt: (v: number) => v.toFixed(1), hint: "每分鐘擊殺的小兵數" },
-  { key: "participants.avg_deaths", label: "平均死亡", fmt: (v: number) => v.toFixed(1), hint: "每場平均死亡次數（越少越好）", lower: true },
+// ── 數據總表：每個人的各項平均，分成幾組切換 ─────────────────────────────────
+// 都是「每場先算再平均」的語意層度量；比人時要記得出裝比例不同（射手天生打塔快、坦克天生承傷多），所以最後一組是出裝比例。
+// 對小兵傷害對局資料沒有，用「總輸出 − 對英雄 − 對建築」估計；死亡時間只有賽後統計有（2026-10-03 起）。
+type StatCol = { key: string; label: string; fmt: (v: number) => string; hint: string; lower?: boolean }
+const int = (v: number) => Math.round(v).toLocaleString()
+const pctFmt = (v: number) => `${v.toFixed(1)}%`
+const mmssFmt = (v: number) => `${Math.floor(v / 60)}:${String(Math.round(v % 60)).padStart(2, "0")}`
+const STAT_SETS: { id: string; label: string; caption: string; cols: StatCol[] }[] = [
   {
-    key: "participants.avg_time_dead",
-    label: "平均死亡時間",
-    fmt: (v: number) => `${Math.floor(v / 60)}:${String(Math.round(v % 60)).padStart(2, "0")}`,
-    hint: "每場在死亡倒數裡的總時間（越少越好）。對局資料沒有，只算有賽後統計的場次（2026-10-03 起、採集器有抓到賽後畫面的）",
-    lower: true,
+    id: "dmg",
+    label: "輸出",
+    caption: "對英雄的傷害。傷害占全隊是零和的（五個人加起來 100%），和強的朋友同隊會被分走",
+    cols: [
+      { key: "participants.avg_damage", label: "平均對英雄傷害", fmt: int, hint: "每場平均對英雄造成的傷害" },
+      { key: "participants.dpm", label: "每分鐘對英雄傷害", fmt: int, hint: "每場對英雄傷害除以對局分鐘數再平均" },
+      { key: "participants.damage_share", label: "傷害占全隊", fmt: pctFmt, hint: "對英雄傷害占我方全隊的比例" },
+      { key: "participants.damage_per_gold", label: "每塊錢傷害", fmt: (v) => v.toFixed(2), hint: "對英雄傷害除以獲得金錢：錢有沒有換成輸出" },
+      { key: "participants.champion_damage_focus", label: "打在英雄上的比例", fmt: pctFmt, hint: "總輸出裡有多少打在英雄身上，偏低代表花很多時間在清兵、打塔" },
+    ],
   },
-] as { key: string; label: string; fmt: (v: number) => string; hint: string; lower?: boolean }[]
-const PUSH_MEASURES = ["participants.games", "participants.time_dead_games", ...PUSH_COLS.map((c) => c.key)]
+  {
+    id: "tank",
+    label: "承傷與存活",
+    caption: "承受傷害高不一定是壞事：前排本來就要吃傷害，要和死亡一起看",
+    cols: [
+      { key: "participants.avg_taken", label: "平均承受傷害", fmt: int, hint: "每場平均承受的總傷害" },
+      { key: "participants.taken_per_min", label: "每分鐘承受傷害", fmt: int, hint: "每場承受傷害除以對局分鐘數再平均" },
+      { key: "participants.tank_share", label: "承傷占全隊", fmt: pctFmt, hint: "承受傷害占我方全隊的比例" },
+      { key: "participants.mitigated_per_min", label: "每分鐘減免傷害", fmt: int, hint: "護甲、魔抗、護盾等擋掉的傷害，每分鐘" },
+      { key: "participants.avg_deaths", label: "平均死亡", fmt: (v) => v.toFixed(1), hint: "每場平均死亡次數（越少越好）", lower: true },
+      { key: "participants.avg_time_dead", label: "平均死亡時間", fmt: mmssFmt, hint: "每場在死亡倒數裡的總時間（越少越好）。對局資料沒有，只算有賽後統計的場次（2026-10-03 起、採集器有抓到賽後畫面的）", lower: true },
+      { key: "participants.time_dead_share", label: "死亡時間占全場", fmt: pctFmt, hint: "死亡總時間占全場時間的比例（越少越好），同樣只算有賽後統計的場次", lower: true },
+    ],
+  },
+  {
+    id: "fight",
+    label: "團戰",
+    caption: "參與擊殺、控場與治療：輔助、坦克的貢獻多半在這裡",
+    cols: [
+      { key: "participants.kda", label: "KDA", fmt: (v) => v.toFixed(2), hint: "(擊殺＋助攻) ÷ 死亡" },
+      { key: "participants.avg_kills", label: "平均擊殺", fmt: (v) => v.toFixed(1), hint: "每場平均擊殺" },
+      { key: "participants.avg_assists", label: "平均助攻", fmt: (v) => v.toFixed(1), hint: "每場平均助攻" },
+      { key: "participants.kill_participation", label: "參團率", fmt: pctFmt, hint: "(擊殺＋助攻) ÷ 隊伍擊殺" },
+      { key: "participants.cc_time_per_min", label: "每分鐘控場", fmt: (v) => `${v.toFixed(1)} 秒`, hint: "每分鐘控制敵人的時間" },
+      { key: "participants.heal_per_min", label: "每分鐘治療", fmt: int, hint: "每分鐘治療量（含自補）" },
+      { key: "participants.multikill_rate", label: "多殺場次率", fmt: pctFmt, hint: "有雙殺以上的場次比例" },
+    ],
+  },
+  {
+    id: "push",
+    label: "推進與資源",
+    caption: "大亂鬥是團戰贏了之後推塔決勝，拆塔是把優勢換成勝利的那一步。射手天生打塔快，比人時看「出裝比例」那組",
+    cols: [
+      { key: "participants.objective_damage_share", label: "建築傷害占全隊", fmt: pctFmt, hint: "對建築的傷害佔我方全隊的比例，每場先算再平均。最能看出「隊上誰在拆塔」" },
+      { key: "participants.avg_objective_damage", label: "平均對塔傷害", fmt: int, hint: "每場平均對防禦塔、兵營、主堡的傷害" },
+      { key: "participants.avg_turret_kills", label: "每場推塔", fmt: (v) => v.toFixed(2), hint: "每場親手摧毀（最後一擊）的防禦塔數" },
+      { key: "participants.total_turret_kills", label: "推塔總數", fmt: int, hint: "範圍內親手摧毀的防禦塔總數（場次多的人自然多）" },
+      { key: "participants.avg_inhibitor_kills", label: "每場兵營", fmt: (v) => v.toFixed(2), hint: "每場親手摧毀的兵營數" },
+      { key: "participants.avg_minion_damage", label: "平均小兵傷害", fmt: int, hint: "估計值：總輸出 − 對英雄傷害 − 對建築傷害（大亂鬥沒有野怪，剩下的幾乎都是小兵）" },
+      { key: "participants.cs_per_min", label: "每分鐘補兵", fmt: (v) => v.toFixed(1), hint: "每分鐘擊殺的小兵數" },
+      { key: "participants.gpm", label: "每分鐘經濟", fmt: int, hint: "每分鐘獲得的金錢" },
+      { key: "participants.gold_share", label: "經濟占全隊", fmt: pctFmt, hint: "獲得金錢占我方全隊的比例" },
+    ],
+  },
+]
+const STAT_MEASURES_ALL = ["participants.games", "participants.time_dead_games", ...STAT_SETS.flatMap((g) => g.cols.map((c) => c.key))]
 
-function PushPanel({ people, rows, loading, profiles }: { people: Player[]; rows: CubeRow[]; loading: boolean; profiles: Map<string, Profile> }) {
-  const [sortKey, setSortKey] = useState<string>(PUSH_COLS[0].key)
+function StatsPanel({
+  people,
+  rows,
+  dmgRows,
+  loading,
+  profiles,
+}: {
+  people: Player[]
+  rows: CubeRow[]
+  dmgRows: CubeRow[]
+  loading: boolean
+  profiles: Map<string, Profile>
+}) {
+  const [setId, setSetId] = useState<string>("dmg")
+  const [sortKey, setSortKey] = useState<string>("participants.avg_damage")
+  const isMix = setId === "mix"
+  const set = STAT_SETS.find((g) => g.id === setId)
+  // 出裝比例那組：六種出裝各占幾成＋AD／AP
+  const mixCols: StatCol[] = [
+    ...BUILD_ROLES.map((r) => ({ key: `mix:${r}`, label: r, fmt: (v: number) => `${Math.round(v * 100)}%`, hint: `出裝是${r}的場次比例` })),
+    { key: "mix:AD", label: "AD 裝", fmt: (v: number) => `${Math.round(v * 100)}%`, hint: "出裝的傷害類型是 AD 的比例（坦克、輔助這種兩種傷害裝都沒買的不算）" },
+  ]
+  const cols = isMix ? mixCols : (set?.cols ?? [])
   const rowOf = (puuid: string) => rows.find((r) => r["participants.puuid"] === puuid)
-  const lowerSort = PUSH_COLS.find((c) => c.key === sortKey)?.lower
+  const valueOf = (puuid: string, key: string): number | null => {
+    if (key.startsWith("mix:")) {
+      const k = key.slice(4)
+      if (k === "AD") {
+        const mine = dmgRows.filter((r) => r["participants.puuid"] === puuid)
+        const ad = n0(mine.find((r) => r["builds.damage_type"] === "AD"), "participants.games")
+        const ap = n0(mine.find((r) => r["builds.damage_type"] === "AP"), "participants.games")
+        return ad + ap ? ad / (ad + ap) : null
+      }
+      return profiles.get(puuid)?.style.mix.find((m) => m.label === k)?.share ?? 0
+    }
+    return opt(rowOf(puuid), key)
+  }
+  const activeSort = cols.some((c) => c.key === sortKey) ? sortKey : cols[0]?.key
+  const lowerSort = cols.find((c) => c.key === activeSort)?.lower
   const sorted = [...people].sort((a, b) => {
-    const va = opt(rowOf(a.puuid), sortKey)
-    const vb = opt(rowOf(b.puuid), sortKey)
+    const va = valueOf(a.puuid, activeSort)
+    const vb = valueOf(b.puuid, activeSort)
     if (va === null || vb === null) return va === null ? (vb === null ? 0 : 1) : -1
     return lowerSort ? va - vb : vb - va
   })
-  // 每欄最好的人：死亡類越少越好
+  // 每欄最好的人標綠；死亡類越少越好。出裝比例不是好壞，不標
   const best = new Map(
-    PUSH_COLS.map((c) => {
-      const vals = people.map((p) => opt(rowOf(p.puuid), c.key)).filter((v): v is number => v !== null)
-      return [c.key, vals.length ? (c.lower ? Math.min(...vals) : Math.max(...vals)) : null]
+    cols.map((c) => {
+      const vals = people.map((p) => valueOf(p.puuid, c.key)).filter((v): v is number => v !== null)
+      return [c.key, isMix || !vals.length ? null : c.lower ? Math.min(...vals) : Math.max(...vals)]
     }),
   )
-  const shareOf = (puuid: string, label: string) => profiles.get(puuid)?.style.mix.find((m) => m.label === label)?.share ?? 0
   return (
     <Panel
-      title="推塔、清兵與陣亡"
-      caption="誰比較常拆塔、清兵，誰比較少死。大亂鬥是團戰贏了之後推塔決勝，拆塔是把優勢換成勝利的那一步。射手天生打塔快，所以最後一欄附上射手的場次比例，比人時一起看。點欄位標題換排序；每欄最好的人標綠（死亡類是越少越好）"
+      title="數據總表"
+      caption="每個人的各項平均（每場先算再平均）。切換上方的分組看不同面向；點欄位標題換排序；每欄最好的人標綠（死亡類是越少越好）。比人時記得出裝不同：射手天生打塔快、坦克天生承傷多，可以對照「出裝比例」"
     >
       {loading ? (
-        <Skeleton className="h-[260px] w-full" />
+        <Skeleton className="h-[300px] w-full" />
       ) : (
-        <div className="reveal overflow-x-auto">
-          <table className="w-full min-w-[1080px] text-sm" data-testid="crew-push">
-            <thead>
-              <tr className="border-b text-[11px] text-muted-foreground">
-                <th className="px-2 py-1.5 text-left font-medium">玩家</th>
-                <th className="px-2 py-1.5 text-right font-medium">場次</th>
-                {PUSH_COLS.map((c) => (
-                  <th key={c.key} className="px-2 py-1.5 text-right font-medium" title={c.hint}>
-                    <button
-                      type="button"
-                      onClick={() => setSortKey(c.key)}
-                      className={cn("cursor-pointer underline-offset-2 hover:text-foreground hover:underline", sortKey === c.key && "text-foreground underline")}
-                    >
-                      {c.label}
-                    </button>
-                  </th>
-                ))}
-                <th className="px-2 py-1.5 text-right font-medium" title="出裝是射手的場次比例">射手場次</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map((p) => {
-                const r = rowOf(p.puuid)
-                return (
-                  <tr key={p.puuid} className="border-b border-border/50 last:border-b-0" data-testid="crew-push-row">
-                    <td className="px-2 py-1.5">
-                      <PlayerName player={p} className="text-sm" />
-                    </td>
-                    <td className="px-2 py-1.5 text-right font-mono tabular-nums text-muted-foreground">{n0(r, "participants.games")}</td>
-                    {PUSH_COLS.map((c) => {
-                      const v = opt(r, c.key)
-                      return (
-                        <td
-                          key={c.key}
-                          data-key={c.key}
-                          className={cn("px-2 py-1.5 text-right font-mono tabular-nums", v !== null && v === best.get(c.key) && "font-semibold text-win")}
-                        >
-                          {v === null ? "—" : c.fmt(v)}
-                          {c.key === "participants.avg_time_dead" && v !== null && (
-                            <span className="ml-1 text-[10px] font-normal text-muted-foreground">{n0(r, "participants.time_dead_games")} 場</span>
-                          )}
-                        </td>
-                      )
-                    })}
-                    <td className="px-2 py-1.5 text-right font-mono tabular-nums text-muted-foreground">{Math.round(shareOf(p.puuid, "射手") * 100)}%</td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+        <div className="reveal space-y-2">
+          <ToggleGroup type="single" size="sm" variant="outline" value={setId} onValueChange={(v) => v && setSetId(v)} className="flex-wrap">
+            {STAT_SETS.map((g) => (
+              <ToggleGroupItem key={g.id} value={g.id}>
+                {g.label}
+              </ToggleGroupItem>
+            ))}
+            <ToggleGroupItem value="mix">出裝比例</ToggleGroupItem>
+          </ToggleGroup>
+          <p className="text-[11px] text-muted-foreground">
+            {isMix ? "六種出裝各占他場次的幾成，以及出 AD 裝的比例（其餘是 AP）。不是好壞，是拿來對照其他數字的" : set?.caption}
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[860px] text-sm" data-testid="crew-stats">
+              <thead>
+                <tr className="border-b text-[11px] text-muted-foreground">
+                  <th className="px-2 py-1.5 text-left font-medium">玩家</th>
+                  <th className="px-2 py-1.5 text-right font-medium">場次</th>
+                  {cols.map((c) => (
+                    <th key={c.key} className="px-2 py-1.5 text-right font-medium" title={c.hint}>
+                      <button
+                        type="button"
+                        onClick={() => setSortKey(c.key)}
+                        className={cn("cursor-pointer underline-offset-2 hover:text-foreground hover:underline", activeSort === c.key && "text-foreground underline")}
+                      >
+                        {c.label}
+                      </button>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map((p) => {
+                  const r = rowOf(p.puuid)
+                  return (
+                    <tr key={p.puuid} className="border-b border-border/50 last:border-b-0" data-testid="crew-stats-row">
+                      <td className="px-2 py-1.5">
+                        <PlayerName player={p} className="text-sm" />
+                      </td>
+                      <td className="px-2 py-1.5 text-right font-mono tabular-nums text-muted-foreground">{n0(r, "participants.games")}</td>
+                      {cols.map((c) => {
+                        const v = valueOf(p.puuid, c.key)
+                        return (
+                          <td
+                            key={c.key}
+                            data-key={c.key}
+                            className={cn("px-2 py-1.5 text-right font-mono tabular-nums", v !== null && v === best.get(c.key) && "font-semibold text-win")}
+                          >
+                            {v === null ? "—" : c.fmt(v)}
+                            {(c.key === "participants.avg_time_dead" || c.key === "participants.time_dead_share") && v !== null && (
+                              <span className="ml-1 text-[10px] font-normal text-muted-foreground">{n0(r, "participants.time_dead_games")} 場</span>
+                            )}
+                          </td>
+                        )
+                      })}
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </Panel>
@@ -1679,11 +1774,13 @@ export function Crew() {
       limit: NO_LIMIT,
     }),
   )
-  const push = useCube(q({ measures: PUSH_MEASURES, dimensions: ["participants.puuid"], limit: NO_LIMIT }))
+  const stats = useCube(q({ measures: STAT_MEASURES_ALL, dimensions: ["participants.puuid"], limit: NO_LIMIT }))
+  // 出裝的傷害類型（AD／AP）：玩家類型與數據總表的出裝比例用
+  const dmgTypes = useCube(q({ measures: ["participants.games"], dimensions: ["participants.puuid", "builds.damage_type"], limit: NO_LIMIT }))
   // 參照列：所有參賽者的出裝比例（不鎖玩家，也不受上方「拿掉誰」影響）
   const everyone = useCube(apply({ measures: ["participants.games", "participants.winrate", "participants.kda"] }, "all"))
   const everyoneRoles = useCube(apply({ measures: ["participants.games"], dimensions: ["builds.build_role"], limit: NO_LIMIT }, "all"))
-  const error = summary.error ?? roles.error ?? champs.error ?? augments.error ?? everyone.error ?? everyoneRoles.error ?? push.error
+  const error = summary.error ?? roles.error ?? champs.error ?? augments.error ?? everyone.error ?? everyoneRoles.error ?? stats.error ?? dmgTypes.error
   const loading = summary.loading || roles.loading || champs.loading || augments.loading || everyone.loading || everyoneRoles.loading
 
   const sumOf = (puuid: string) => summary.rows.find((r) => r["participants.puuid"] === puuid)
@@ -1711,11 +1808,12 @@ export function Crew() {
         .map((r) => statOf(r, String(r["champions.name"]), String(r["champions.name"]), r["champions.icon_path"] as string))
       const roleJ = judgeAll(roleStats, own)
       const champJ = judgeAll(champStats, own)
-      const style = playStyleOf(roleJ.items, champJ.items, s, base, overallStat.scored)
+      const dmgOf = (t: string) => n0(dmgTypes.rows.find((r) => r["participants.puuid"] === p.puuid && r["builds.damage_type"] === t), "participants.games")
+      const style = playStyleOf(roleJ.items, champJ.items, s, base, overallStat.scored, { ad: dmgOf("AD"), ap: dmgOf("AP") })
       out.set(p.puuid, { overall, overallWr, roles: roleJ.items, roleK: roleJ.k, champs: champJ.items, champK: champJ.k, style })
     }
     return out
-  }, [crew, summary.rows, roles.rows, champs.rows, everyoneRoles.rows])
+  }, [crew, summary.rows, roles.rows, champs.rows, everyoneRoles.rows, dmgTypes.rows])
 
   // 依場次排：場次多的人判斷比較可信，放前面
   const ordered = [...chosen].sort((a, b) => gamesOf(b.puuid) - gamesOf(a.puuid))
@@ -1908,7 +2006,7 @@ export function Crew() {
         )}
       </Panel>
 
-      <PushPanel people={ordered} rows={push.rows} loading={loading || push.loading} profiles={profiles} />
+      <StatsPanel people={ordered} rows={stats.rows} dmgRows={dmgTypes.rows} loading={loading || stats.loading || dmgTypes.loading} profiles={profiles} />
 
       {/* ── 查英雄、查增幅裝置：選一個，看每個人用它的勝率與貢獻 ── */}
       {/* 兩個面板一樣的結構，寬螢幕（1900px 以上，展開的對局卡片才放得進半版）左右並排，其餘上下疊 */}

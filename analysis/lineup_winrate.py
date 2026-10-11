@@ -13,14 +13,14 @@ import sqlite3
 random.seed(5)
 c = sqlite3.connect("file:mayhem.db?mode=ro", uri=True)
 
-ROLES = ["坦克", "AD 鬥士", "AD 近戰", "AD 刺客", "射手", "AP 輸出", "AP 刺客", "AP 鬥士", "輔助"]
-FRONT = {"坦克", "AD 鬥士", "AP 鬥士"}
-AD = {"AD 鬥士", "射手", "AD 近戰", "AD 刺客"}
-AP = {"AP 鬥士", "AP 輸出", "AP 刺客"}
+ROLES = ["坦克", "鬥士", "刺客", "射手", "法師", "輔助"]
+FRONT = {"坦克", "鬥士"}
+# 物理／魔法看出裝的傷害類型（builds.damage_type），坦克、輔助不算
+DAMAGE_ROLES = {"鬥士", "刺客", "射手", "法師"}
 
 rows = c.execute(
     """
-    SELECT p.platform_id, p.game_id, p.team_id, p.win, b.build_role,
+    SELECT p.platform_id, p.game_id, p.team_id, p.win, b.build_role, b.damage_type,
            EXISTS(SELECT 1 FROM accounts a WHERE a.puuid = p.puuid AND (a.is_me = 1 OR a.tracked = 1)) AS crew
       FROM match_participants p
       JOIN matches m USING (platform_id, game_id)
@@ -30,9 +30,11 @@ rows = c.execute(
 ).fetchall()
 
 games = {}
-for plat, gid, team, win, role, crew in rows:
+DMG = {}
+for plat, gid, team, win, role, dmg, crew in rows:
     g = games.setdefault((plat, gid), {"teams": {}, "crew_team": None, "crew_win": None})
     g["teams"].setdefault(team, []).append(role)
+    g.setdefault("dmg", {}).setdefault(team, []).append(dmg if role in DAMAGE_ROLES else None)
     if crew:
         g["crew_team"] = team
         g["crew_win"] = win
@@ -44,6 +46,8 @@ for g in games.values():
     mine = g["teams"][g["crew_team"]]
     theirs = next(v for k, v in g["teams"].items() if k != g["crew_team"])
     data.append((mine, theirs, g["crew_win"]))
+    DMG[id(mine)] = g["dmg"][g["crew_team"]]
+    DMG[id(theirs)] = next(v for k, v in g["dmg"].items() if k != g["crew_team"])
 N = len(data)
 BASE = sum(w for _, _, w in data) / N
 print(f"{N} 場，整體勝率 {BASE:.1%}\n")
@@ -52,8 +56,8 @@ print(f"{N} 場，整體勝率 {BASE:.1%}\n")
 def team_feats(team):
     return {
         "front": sum(r in FRONT for r in team),
-        "ad": sum(r in AD for r in team),
-        "ap": sum(r in AP for r in team),
+        "ad": sum(d == "AD" for d in DMG[id(team)]),
+        "ap": sum(d == "AP" for d in DMG[id(team)]),
         "sup": sum(r == "輔助" for r in team),
     }
 

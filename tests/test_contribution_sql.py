@@ -3,6 +3,7 @@
 
 整套分數和獨立 Python 實作的逐筆比對是在真實資料上做的（見 docs/contribution-scoring.md 的驗證）。"""
 import sqlite3
+import statistics
 import tempfile
 import unittest
 from pathlib import Path
@@ -16,7 +17,7 @@ SQL = yaml.safe_load(YML.read_text(encoding="utf-8"))["cubes"][0]["meta"]["mater
 
 
 class Fixture:
-    """幾場對局、每場十個人，全部是 AP 輸出（同一個比較池）。"""
+    """幾場對局、每場十個人，全部是法師（同一個比較池）。"""
 
     def __init__(self, path):
         db.init(path)
@@ -30,7 +31,10 @@ class Fixture:
         units_healed, eog = units_healed or {}, eog or {}
         c = self.conn
         c.execute(
-            "INSERT INTO matches VALUES ('TW2',?,2400,'KIWI','16.19',12,1000,?,0,NULL,NULL,NULL,'{}',1)",
+            """INSERT INTO matches
+               (platform_id,game_id,queue_id,game_mode,game_version,map_id,game_creation,
+                game_duration,ended_surrender,local_date,local_weekday,local_hour,raw_json,ingested_at)
+               VALUES ('TW2',?,2400,'KIWI','16.19',12,1000,?,0,NULL,NULL,NULL,'{}',1)""",
             (game_id, minutes * 60),
         )
         dmg = {i: (10000 + i * 500) * dmg_mult for i in range(1, 11)}
@@ -45,7 +49,7 @@ class Fixture:
                  team_dmg[100 if i <= 5 else 200], units_healed.get(i, 1)),
             )
             self.rows[(game_id, i)] = cur.lastrowid
-            c.execute("INSERT INTO mat_builds VALUES (?, 'AP 輸出')", (cur.lastrowid,))
+            c.execute("INSERT INTO mat_builds VALUES (?, '法師')", (cur.lastrowid,))
             if i in eog:
                 c.execute(
                     "INSERT INTO eog_player_stats (game_id, puuid, team_id, champion_id, heal_on_teammates, shield_on_teammates) VALUES (?,?,?,1,?,?)",
@@ -169,13 +173,21 @@ class PerformanceScoreTests(unittest.TestCase):
         self.assertAlmostEqual(min(short), 0.0)
         self.assertAlmostEqual(min(long_), 0.0)
 
-    def test_perf_is_the_weighted_average_of_the_axes_not_a_rank(self):
+    def test_perf_calibrates_weighted_axes_within_the_comparison_pool(self):
         for g in (1, 2, 3):
             self.fx.game(g)
         res = self.fx.result()
+        # 現行法師權重為 50/20/15/15；加權後依比較池校準到平均 50、標準差 20。
+        # 全部合成玩家都屬同一比較池，使用獨立 Python 計算核對。
+        raw = {}
+        for rid, r in res.items():
+            present = [(weight, r[key]) for weight, key in
+                       ((50, "pa_dmg"), (20, "pa_surv"), (15, "pa_kp"), (15, "pa_cc")) if r[key] is not None]
+            raw[rid] = round(sum(weight * value for weight, value in present) / sum(weight for weight, _ in present), 9)
+        mean = statistics.mean(raw.values())
+        spread = statistics.pstdev(raw.values())
         for r in self.game_rows(res, 1):
-            # AP 輸出：輸出 55、承傷 0、存活 20、參團 15、控場 10（沒有治療軸的場次）
-            expected = (55 * r["pa_dmg"] + 20 * r["pa_surv"] + 15 * r["pa_kp"] + 10 * r["pa_cc"]) / 100
+            expected = min(100, max(0, 50 + 20 * (raw[r["rid"]] - mean) / spread))
             self.assertAlmostEqual(r["perf"], expected, places=6)
         # 加權平均不會被拉成 0～100 平均分布：最高分遠低於 100
         self.assertLess(max(r["perf"] for g in (1, 2, 3) for r in self.game_rows(res, g)), 95)

@@ -1,22 +1,19 @@
 import { cn } from "@/lib/utils"
 
-/** 出裝定位標籤。九種定位沒辦法各給一個分得開的顏色（見 index.css 的 --role-*），所以拆成兩個編碼：
- *  - 顏色＝傷害類型：AD 橘、AP 紫、坦克與輔助青（不靠輸出吃飯的）
- *  - 框線＝站位：實心＝前排（坦克、AD 鬥士、AP 鬥士）、虛線＝近身切入（刺客、AD 近戰）、空心＝後排（射手、AP 輸出、輔助）
+/** 出裝定位標籤（六類）。兩個編碼：
+ *  - 顏色：射手橘、法師紫、坦克與輔助青；鬥士、刺客 AD／AP 都有，用中性灰（傷害類型另看 builds.damage_type）
+ *  - 框線＝站位：實心＝前排（坦克、鬥士）、虛線＝近身切入（刺客）、空心＝後排（射手、法師、輔助）
  *  文字一律用前景色（顏色只放在點、框與底色），色盲或亮色主題也讀得到。 */
-type Tone = "ad" | "ap" | "util"
+type Tone = "ad" | "ap" | "util" | "mix"
 type Shape = "front" | "assassin" | "back"
 
 const ROLE_STYLE: Record<string, { tone: Tone; shape: Shape }> = {
   坦克: { tone: "util", shape: "front" },
-  輔助: { tone: "util", shape: "back" },
-  "AD 鬥士": { tone: "ad", shape: "front" },
-  "AD 刺客": { tone: "ad", shape: "assassin" },
-  "AD 近戰": { tone: "ad", shape: "assassin" },
+  鬥士: { tone: "mix", shape: "front" },
+  刺客: { tone: "mix", shape: "assassin" },
   射手: { tone: "ad", shape: "back" },
-  "AP 鬥士": { tone: "ap", shape: "front" },
-  "AP 刺客": { tone: "ap", shape: "assassin" },
-  "AP 輸出": { tone: "ap", shape: "back" },
+  法師: { tone: "ap", shape: "back" },
+  輔助: { tone: "util", shape: "back" },
 }
 
 // Tailwind 要看得到完整的 class 名稱才會產生，不能用字串拼接
@@ -38,6 +35,12 @@ const TONE: Record<Tone, { dot: string; front: string; assassin: string; back: s
     front: "border-role-util bg-role-util/25",
     assassin: "border-dashed border-role-util bg-role-util/10",
     back: "border-role-util/70",
+  },
+  mix: {
+    dot: "bg-muted-foreground",
+    front: "border-muted-foreground bg-muted-foreground/20",
+    assassin: "border-dashed border-muted-foreground bg-muted-foreground/10",
+    back: "border-muted-foreground/70",
   },
 }
 
@@ -78,11 +81,11 @@ export function RoleLegend({ className }: { className?: string }) {
     <span className={cn("inline-flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground", className)}>
       <span className="inline-flex items-center gap-1">
         <span className="size-1.5 rounded-full bg-role-ad" />
-        AD
+        射手
       </span>
       <span className="inline-flex items-center gap-1">
         <span className="size-1.5 rounded-full bg-role-ap" />
-        AP
+        法師
       </span>
       <span className="inline-flex items-center gap-1">
         <span className="size-1.5 rounded-full bg-role-util" />

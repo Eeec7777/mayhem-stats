@@ -1,35 +1,32 @@
 cubes:
-  # 出裝定位：依這場終場的裝備判斷「實際怎麼玩」，不看英雄的官方定位。
+  # 出裝定位：依這場終場的裝備判斷「實際怎麼玩」，不看英雄的官方定位。全站只用這一套六類（2026-10-11 收斂）：
+  #   坦克、鬥士、刺客、射手、法師、輔助（太早結束沒成裝的是「未成形」）。
+  # 傷害類型（AD／AP）另外一個欄位 damage_type，不放進定位名稱——以前的「AD 鬥士／AP 鬥士、AD 輸出／AP 輸出」
+  # 讓定位變成九種，雷達、陣容、好友比較每頁各自再合併一次，越來越難懂。
   #
-  # 為什麼需要：官方定位看不出實際出裝。好友圈 938 場裡，官方「鬥士」271 場有 132 場是出純 AD 輸出裝、
-  # 「輔助」57 場有 22 場是出 AP 輸出裝——用官方定位問「適不適合鬥士」，其實混了兩種完全不同的玩法。
+  # 為什麼需要：官方定位看不出實際出裝。官方「鬥士」有一半出純輸出裝、「輔助」常出法師裝——
+  # 用官方定位問「適不適合鬥士」，其實混了兩種完全不同的玩法。
   #
   # 怎麼算：終場 6 格裝備（不含飾品），排除鞋子與總價 1500 以下的零件，依各裝備的類別把「總價」分給
-  # AD／AP／坦度三堆（一件裝備同時屬於幾堆就平分），輔助裝另成一堆。再看各堆佔的金額比例：
-  #   - 輔助裝 ≥ 35%                                   → 輔助
-  #   - 坦度 ≥ 50%，且 AD、AP 都 < 25%                  → 坦克
-  #   - 坦度 ≥ 30%                                     → AD 鬥士／AP 鬥士（看 AD、AP 哪堆多）
-  #   - 其餘，AD ≥ AP：AD 金額裡「穿甲裝」最多           → AD 刺客
-  #                    否則英雄有官方「射手」定位           → 射手，否則 AD 近戰
-  #   - 其餘，AP > AD：英雄的官方主定位是刺客            → AP 刺客，否則 AP 輸出
-  #   - 沒有任何成裝（太早結束）                         → 未成形
-  #   「AP 鬥士」舊稱「AP 坦」：它和 AD 鬥士對稱（坦度裝約一半、另一半是傷害裝，只差傷害類型），不是坦克；
-  #   坦克要求坦度 ≥ 50% 且 AD、AP 各 < 25%（幾乎純坦裝），所以坦度很高但帶了 25% 以上傷害裝的人也歸鬥士。
+  # AD／AP／坦度三堆（一件裝備同時屬於幾堆就平分），輔助裝另成一堆。再看各堆佔的金額比例，依序：
+  #   1. 輔助裝 ≥ 35%                                        → 輔助
+  #   2. 坦度 ≥ 50%，且 AD、AP 都 < 25%（幾乎純坦裝）          → 坦克
+  #   3. 坦度 ≥ 30%（一半肉一半輸出）                         → 鬥士
+  #   4. AD ≥ AP：AD 金額裡「穿甲裝」最多                      → 刺客
+  #              否則英雄有官方「射手」定位                     → 射手
+  #              否則（近戰英雄出 AD 輸出裝：犽宿、易大師…）     → 刺客
+  #   5. AP > AD：英雄的官方主定位是刺客                       → 刺客，否則 → 法師
+  #   沒有任何成裝（太早結束）                                 → 未成形
   #
-  # 刺客為什麼要另外判斷：類別 ArmorPenetration 同時貼在妖夢、傲慢（物理致命）與蒐集者、多明尼克（暴擊）上，
-  # 只看類別會把刺客全併進 AD 輸出。所以 AD 的金額再依裝備數值（dim_item_stats，從裝備說明取出）細分：
-  #   有暴擊率 → 暴擊；否則有物理致命或物理穿透 → 穿甲；否則有攻速 → 攻速；其餘 → 其他
-  # 穿甲那一堆嚴格最多才是 AD 刺客（同額不算：平手的是克黎思妲、希維爾這種射手）。
-  # 全資料庫 AD 輸出 1,088 筆裡穿甲為主的 191 筆，英雄是劫、派克、李星、塔隆、姬亞娜、卡力斯，
-  # 承傷佔比 19.5%（暴擊為主 16.8%）、勝率低 9pp，打法明顯不同。
-  # AP 刺客的裝備分不開（唯一線索魔法穿透，但黯影之炎幾乎每個法師都買），只好借英雄的官方主定位：
-  # AP 輸出裝 + 官方主定位是刺客（艾克、奈德麗、飛斯、勒布朗、阿卡莉…），擊殺佔比 24.9%，法師 18.7%。
-  # 主定位的定義同 champion_roles.is_primary（同一隻英雄 rowid 最小的那筆）。
-  #
-  # 射手／AD 近戰（2026-10-11 從「AD 輸出」拆開）：出一樣的 AD 輸出裝，手長的射手和近戰英雄（犽宿、犽凝、易大師、
-  # 剛普朗克、赫克林、貝爾薇斯…）打法完全不同——近戰要貼上去吃傷害，射手站後排。舊的 AD 輸出 1,682 筆裡 619 筆（37%）是後者。
-  # 客戶端資料沒有攻擊距離，用官方定位判斷：英雄的任何一個官方定位是 marksman（射手）就算射手（凱特琳、伊澤瑞爾、杰西、
-  # 凱爾、提摩…；近戰英雄都沒有這個定位），否則是 AD 近戰。不看主定位，因為杰西、凱爾這種的射手是第二定位。
+  # 刺客＝要貼身切入的輸出，三種來源合在一起：
+  #   穿甲型 AD（劫、塔隆、派克）：類別 ArmorPenetration 同時貼在妖夢、傲慢（物理致命）與蒐集者、多明尼克（暴擊）上，
+  #     所以 AD 的金額再依裝備數值（dim_item_stats）細分：有暴擊率 → 暴擊；否則有物理致命或物理穿透 → 穿甲；
+  #     否則有攻速 → 攻速；其餘 → 其他。穿甲那一堆嚴格最多才算（同額不算：平手的是克黎思妲、希維爾這種射手）。
+  #   近戰 AD 輸出（犽宿、犽凝、易大師、剛普朗克、貝爾薇斯）：出一樣的暴擊／攻速裝，但要貼上去打，和站後排的射手完全不同。
+  #     客戶端資料沒有攻擊距離，用官方定位判斷：英雄任何一個官方定位是 marksman 就算射手（杰西、凱爾的射手是第二定位），
+  #     近戰英雄都沒有這個定位。這兩種的傷害占比 22.6%／22.3%、承傷占比 20.7%／19.5%，幾乎一樣（2026-10-11）。
+  #   AP 刺客（艾克、飛斯、勒布朗、阿卡莉）：裝備和法師分不開（唯一線索魔法穿透，但黯影之炎幾乎每個法師都買），
+  #     只好借英雄的官方主定位（同 champion_roles.is_primary：同一隻英雄 rowid 最小的那筆）。
   #
   # 類別來自客戶端 items.json（dim_item_categories）。
   #   AD  ：Damage、CriticalStrike、AttackSpeed、ArmorPenetration、LifeSteal、OnHit
@@ -39,8 +36,7 @@ cubes:
   # 只能明列：月之石再生裝置、帝王命令、歌謠之冠、熾灼魔器、破曉之核、贖罪神石、流水之杖、
   # 米凱的祝福、希利亞的迴響、蘇瑞亞的戰歌、低語之環。騎士誓願、日輪的加冕本質是坦克裝，照金額算進坦度。
   #
-  # 驗證（全資料庫 Mayhem 3,200 筆參賽者）：各類的傷害佔比／承傷佔比明顯分得開——
-  # 坦克 16%／31%、AD 輸出 22%／18%、輔助 8%／14%（平均治療 21k，其他類 6～16k）。
+  # 傷害類型 damage_type：AD 金額 ≥ AP 金額是 AD，否則 AP；兩堆都是 0（純坦、純輔助裝）是「無」。
   - name: builds
     title: 出裝定位
     # 規則本體在 meta.materialize.sql。每次入庫後由 features.py 照它重建 mat_builds，這裡直接讀表：
@@ -108,14 +104,16 @@ cubes:
                 WHEN g.tank / (g.ad + g.ap + g.tank + g.sup) >= 0.5
                      AND g.ad / (g.ad + g.ap + g.tank + g.sup) < 0.25
                      AND g.ap / (g.ad + g.ap + g.tank + g.sup) < 0.25 THEN '坦克'
-                WHEN g.tank / (g.ad + g.ap + g.tank + g.sup) >= 0.3 THEN CASE WHEN g.ad >= g.ap THEN 'AD 鬥士' ELSE 'AP 鬥士' END
+                WHEN g.tank / (g.ad + g.ap + g.tank + g.sup) >= 0.3 THEN '鬥士'
                 WHEN g.ad >= g.ap THEN
-                  CASE WHEN g.ad_pen > g.ad_crit AND g.ad_pen > g.ad_as AND g.ad_pen > g.ad_other THEN 'AD 刺客'
+                  CASE WHEN g.ad_pen > g.ad_crit AND g.ad_pen > g.ad_as AND g.ad_pen > g.ad_other THEN '刺客'
                        WHEN mk.champion_id IS NOT NULL THEN '射手'
-                       ELSE 'AD 近戰' END
-                WHEN pr.role = 'assassin' THEN 'AP 刺客'
-                ELSE 'AP 輸出'
+                       ELSE '刺客' END
+                WHEN pr.role = 'assassin' THEN '刺客'
+                ELSE '法師'
               END AS build_role,
+              CASE WHEN COALESCE(g.ad, 0) = 0 AND COALESCE(g.ap, 0) = 0 THEN '無'
+                   WHEN g.ad >= g.ap THEN 'AD' ELSE 'AP' END AS damage_type,
               mp.dmg_to_champions * 100.0 / NULLIF(mp.team_dmg, 0) AS dmg_share,
               mp.dmg_taken * 100.0 / NULLIF(tt.taken, 0) AS taken_share,
               (mp.kills + mp.assists) * 100.0 / NULLIF(mp.team_kills, 0) AS kp
@@ -130,13 +128,10 @@ cubes:
             SELECT *,
               CASE build_role
                 WHEN '射手' THEN dmg_share
-                WHEN 'AD 近戰' THEN dmg_share
-                WHEN 'AP 輸出' THEN dmg_share
-                WHEN 'AD 刺客' THEN dmg_share
-                WHEN 'AP 刺客' THEN dmg_share
+                WHEN '法師' THEN dmg_share
+                WHEN '刺客' THEN dmg_share
                 WHEN '坦克' THEN taken_share
-                WHEN 'AD 鬥士' THEN (dmg_share + taken_share) / 2
-                WHEN 'AP 鬥士' THEN (dmg_share + taken_share) / 2
+                WHEN '鬥士' THEN (dmg_share + taken_share) / 2
                 WHEN '輔助' THEN kp
               END AS role_metric
             FROM classified
@@ -167,8 +162,16 @@ cubes:
       # 字串而不是數字比較：理由同 participants.is_me（CASE 運算式沒有型別親和性）
       - name: build_role
         title: 出裝定位
-        description: "依終場裝備判斷的實際定位：射手、AD 近戰、AD 刺客、AP 輸出、AP 刺客、坦克、AD 鬥士、AP 鬥士、輔助、未成形。射手／AD 近戰＝AD 輸出裝，英雄有官方射手定位的是射手、其餘是 AD 近戰；AD 刺客＝AD 裝以物理致命／穿甲裝為主；AP 刺客＝AP 輸出裝且英雄官方主定位是刺客。規則見 cube/model/cubes/builds.yml；和英雄的官方定位（champion_roles）不同，同一隻英雄不同場可能不一樣。"
+        description: "依終場裝備判斷的實際定位，六類：坦克、鬥士（坦度裝約一半）、刺客（穿甲型 AD、近戰英雄出 AD 輸出裝、AP 裝且官方主定位是刺客）、射手（AD 輸出裝且英雄有官方射手定位）、法師（AP 輸出裝）、輔助，另有未成形（太早結束沒成裝）。AD／AP 看 damage_type。規則見 cube/model/cubes/builds.yml；和英雄的官方定位（champion_roles）不同，同一隻英雄不同場可能不一樣。"
         sql: build_role
+        type: string
+        meta:
+          group: 配置
+
+      - name: damage_type
+        title: 出裝傷害類型
+        description: "這場出裝的傷害類型：AD 裝金額 ≥ AP 裝金額是 AD，否則 AP；兩種都沒買（純坦、純輔助裝）是「無」。和出裝定位分開，例如鬥士可以是 AD 或 AP。"
+        sql: damage_type
         type: string
         meta:
           group: 配置
@@ -200,13 +203,13 @@ cubes:
     measures:
       # 表現分數：這場的「定位關鍵指標」減掉全資料庫同模式、同出裝定位的平均（百分點）。
       # 每個定位的工作不同，關鍵指標也不同：
-      #   AD／AP 輸出、AD／AP 刺客 → 傷害佔比；坦克 → 承傷佔比；AD 鬥士／AP 鬥士 → 兩者平均；輔助 → 參團率
+      #   射手、法師、刺客 → 傷害佔比；坦克 → 承傷佔比；鬥士 → 兩者平均；輔助 → 參團率
       # 都是「佔我方隊伍的比例」，陣容已經內含：隊上輸出越多，同樣打法的傷害佔比自然越低。
       # 基準用全資料庫（每場 10 人都算，Mayhem 約 3,200 筆），比只看自己人穩定得多；
       # 基準不跟著期間篩選變動，所以不同期間的分數可以直接比。
       - name: perf_index
         title: 表現分數
-        description: "定位關鍵指標和全資料庫同出裝定位平均的差距（百分點）。AD／AP 輸出與刺客看傷害佔比、坦克看承傷佔比、AD 鬥士／AP 鬥士看兩者平均、輔助看參團率。正數代表這個定位的工作做得比一般人多。"
+        description: "定位關鍵指標和全資料庫同出裝定位平均的差距（百分點）。射手、法師與刺客看傷害佔比、坦克看承傷佔比、鬥士看兩者平均、輔助看參團率。正數代表這個定位的工作做得比一般人多。"
         sql: perf_index
         type: avg
         meta:
@@ -217,7 +220,7 @@ cubes:
 
       - name: role_metric
         title: 定位關鍵指標
-        description: "依出裝定位取的關鍵指標（%）：輸出與刺客看傷害佔比、坦克看承傷佔比、鬥士／AP 鬥士看兩者平均、輔助看參團率。"
+        description: "依出裝定位取的關鍵指標（%）：射手、法師與刺客看傷害佔比、坦克看承傷佔比、鬥士看兩者平均、輔助看參團率。"
         sql: role_metric
         type: avg
         meta:

@@ -87,7 +87,7 @@ test.describe("陣容頁：什麼陣容比較會贏", () => {
     const games = lineupGames()
     const base = (100 * games.reduce((a, g) => a + g.win, 0)) / games.length
     await expect(sidePanel(page).getByText(new RegExp(`比整體 ${base.toFixed(1)}% 高或低`))).toBeVisible()
-    await expect(page.getByText(/前排＝出裝是坦克、AD 鬥士或 AP 鬥士的人/)).toBeVisible()
+    await expect(page.getByText(/前排＝出裝是坦克或鬥士的人/)).toBeVisible()
     await expect(sidePanel(page).getByText(/^看得出差別的：|^目前沒有任何一種陣容看得出差別/)).toBeVisible()
   })
 
@@ -138,7 +138,7 @@ test.describe("陣容頁：這種陣容下出什麼裝", () => {
     for (const [i, b] of ["0 個", "1 個", "2 個以上"].entries()) {
       const col = cols.nth(i)
       await expect(col).toContainText(`隊友前排 ${b}`)
-      for (const role of ["坦克", "AD 鬥士", "AD 近戰", "AD 刺客", "射手", "AP 輸出", "AP 刺客", "AP 鬥士", "輔助"]) {
+      for (const role of ["坦克", "鬥士", "刺客", "射手", "法師", "輔助"]) {
         await expectRow(gapRow(col, role), cells.get(`${b}|${role}`), `隊友前排 ${b}・${role}`)
       }
     }
@@ -273,12 +273,12 @@ test.describe("陣容頁：看誰的數據", () => {
   })
 })
 
-/** 全資料庫每一隊（兩隊都算）的陣容原型，獨立用 SQL 算：前排＝坦克／鬥士，輸出核心＝AD／AP 輸出與刺客 */
+/** 全資料庫每一隊（兩隊都算）的陣容原型，獨立用 SQL 算：前排＝坦克／鬥士，輸出核心＝刺客、射手、法師 */
 function allTeams() {
   const rows = sql(
     `SELECT p.platform_id, p.game_id, p.team_id, MAX(p.win) AS win,
             SUM(b.build_role = '坦克' OR b.build_role LIKE '%鬥士') AS front,
-            SUM(b.build_role IN ('射手', 'AD 近戰', 'AD 刺客', 'AP 輸出', 'AP 刺客')) AS carry
+            SUM(b.build_role IN ('刺客', '射手', '法師')) AS carry
        FROM match_participants p JOIN matches m USING (platform_id, game_id) JOIN mat_builds b ON b.participant_rowid = p.rowid
       WHERE m.queue_id = 2400 GROUP BY p.platform_id, p.game_id, p.team_id`,
   )

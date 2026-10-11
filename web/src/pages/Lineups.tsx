@@ -413,11 +413,11 @@ function Archetypes({ who, scope }: { who: Who; scope: WhoScope }) {
 /** 判定的字：有區間但和基準差不多是「普通」（「看不出」會被讀成場次不夠），沒有區間才是「樣本太少」 */
 const verdictText = (g: { interval: [number, number] | null }, v: string) => (g.interval === null ? "樣本太少" : v === "看不出" ? "普通" : v)
 
-/** 五人組成的粗分類，順序同語意層 comp_context.team_lineup 的字串（坦鬥切射法輔未） */
+/** 五人組成：出裝定位取第一個字，順序同語意層 comp_context.team_lineup 的字串（坦鬥刺射法輔未） */
 const LINEUP_CLASSES = [
   { ch: "坦", label: "坦克", hint: "出裝是坦克", tone: "border-role-util/70" },
-  { ch: "鬥", label: "鬥士", hint: "AD 鬥士或 AP 鬥士（坦度裝約一半、傷害裝約一半）", tone: "border-muted-foreground/60" },
-  { ch: "切", label: "近戰／刺客", hint: "AD 近戰（近戰英雄出 AD 輸出裝）、AD 刺客、AP 刺客：要貼身切入的輸出", tone: "border-dashed border-muted-foreground/70" },
+  { ch: "鬥", label: "鬥士", hint: "坦度裝約一半、傷害裝約一半（AD 或 AP）", tone: "border-muted-foreground/60" },
+  { ch: "刺", label: "刺客", hint: "要貼身切入的輸出：穿甲型 AD、近戰英雄出 AD 輸出裝（犽宿、易大師）、AP 刺客（艾克、飛斯）", tone: "border-dashed border-muted-foreground/70" },
   { ch: "射", label: "射手", hint: "AD 輸出裝、英雄有官方射手定位", tone: "border-role-ad/70" },
   { ch: "法", label: "法師", hint: "AP 輸出裝（不是刺客）", tone: "border-role-ap/70" },
   { ch: "輔", label: "輔助", hint: "出輔助裝", tone: "border-role-util/70" },
@@ -503,7 +503,7 @@ function LineupFive({ who, scope }: { who: Who; scope: WhoScope }) {
   return (
     <Panel
       title="五人組成：五個人分別是什麼"
-      caption="每個人依出裝歸一類：坦克、鬥士、近戰／刺客（近戰英雄出 AD 輸出裝、AD／AP 刺客）、射手（有官方射手定位的英雄出 AD 輸出裝）、法師（AP 輸出）、輔助。判定看「所有隊伍」（每場兩隊都算）；區間已依一次比幾列放寬，整段在 50% 同一邊才寫強勢／不強勢"
+      caption="每個人的出裝定位：坦克、鬥士、刺客（含近戰英雄出 AD 輸出裝）、射手（有官方射手定位的英雄出 AD 輸出裝）、法師、輔助。判定看「所有隊伍」（每場兩隊都算）；區間已依一次比幾列放寬，整段在 50% 同一邊才寫強勢／不強勢"
     >
       {loading ? (
         <Skeleton className="h-[420px] w-full" />
@@ -738,7 +738,7 @@ export function Lineups() {
                   ))}
                 </div>
                 <p className="text-[11px] leading-relaxed text-muted-foreground">
-                  前排＝出裝是坦克、AD 鬥士或 AP 鬥士的人。輸出組成看出裝定位：物理（AD 鬥士／輸出／刺客）比魔法（AP 鬥士／輸出／刺客）多 2 人以上是「物理為主」，
+                  前排＝出裝是坦克或鬥士的人。輸出組成看出裝的傷害類型：鬥士、刺客、射手、法師裡物理比魔法多 2 人以上是「物理為主」，
                   反過來是「魔法為主」，其餘「混合」。出裝定位依終場裝備判斷，太早結束沒成形的不算任何一類。
                   這是「出現過這種陣容的場次」，不是因果：前排多的一方也可能是因為打得久、裝備出得齊。
                 </p>
