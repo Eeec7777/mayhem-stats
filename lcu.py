@@ -54,7 +54,7 @@ def read_lockfile(path):
     content = Path(path).read_text(encoding="utf-8").strip()
     parts = content.split(":")
     if len(parts) != 5:
-        raise ValueError(f"lockfile 格式不正確: {content!r}")
+        raise ValueError("lockfile 格式不正確：應有 5 個欄位。")
     _, _pid, port, password, protocol = parts
     return port, password, protocol
 
@@ -64,6 +64,9 @@ class LCUClient:
         self.base = f"{protocol}://127.0.0.1:{port}"
         token = base64.b64encode(f"riot:{password}".encode()).decode()
         self.headers = {"Authorization": f"Basic {token}"}
+        # 採集器可在任何欄位整理之前完整保存回應；其他 API 使用者不必啟用。
+        self.on_response = None
+        self.on_error = None
 
     @classmethod
     def connect(cls, override_path=None):
@@ -82,15 +85,28 @@ class LCUClient:
                 verify=False, timeout=timeout,
             )
         except requests.exceptions.RequestException as exc:
+            if self.on_error:
+                self.on_error(path, exc)
             raise LCUUnavailable(f"連不到本機客戶端 API: {exc}") from exc
-        resp.raise_for_status()
-        return resp.json()
+        try:
+            resp.raise_for_status()
+            data = resp.json()
+        except (requests.RequestException, ValueError) as exc:
+            if self.on_error:
+                self.on_error(path, exc)
+            raise
+        if self.on_response:
+            self.on_response(path, params, data)
+        return data
 
     def current_summoner(self):
         return self.get("/lol-summoner/v1/current-summoner")
 
     def gameflow_phase(self):
-        return self.get("/lol-gameflow/v1/gameflow-phase")
+        return self.get("/lol-gameflow/v1/gameflow-phase", timeout=3)
+
+    def gameflow_session(self):
+        return self.get("/lol-gameflow/v1/session", timeout=3)
 
     def recent_matches(self):
         """最新 100 場。
@@ -120,7 +136,11 @@ class LCUClient:
     def eog_stats_block(self):
         """賽後統計（賽後畫面那一份）。只有賽後畫面存在時才有，其他時候回 404（raise_for_status 的 HTTPError），
         呼叫端自己處理。對局明細端點沒有治療／護盾隊友的量，這一份有沒有，要打完一場才知道。"""
-        return self.get("/lol-end-of-game/v1/eog-stats-block")
+        return self.get("/lol-end-of-game/v1/eog-stats-block", timeout=3)
+
+    def gameclient_eog_stats_block(self):
+        """遊戲程式交給 LCU 的另一份賽後統計。完整存原文，尚不假設其欄位格式。"""
+        return self.get("/lol-end-of-game/v1/gameclient-eog-stats-block", timeout=3)
 
     def game_timeline(self, game_id):
         """逐幀時間軸：每分鐘一格（每位參賽者的經濟、經驗、位置），加上擊殺、拆建築、買賣裝等帶時間戳的事件。
@@ -129,7 +149,7 @@ class LCUClient:
 
     def champ_select_session(self):
         """選角階段的 session：雙方陣容、板凳英雄、重抽次數、交換請求。不在選角時回 404（HTTPError），呼叫端自己處理。"""
-        return self.get("/lol-champ-select/v1/session")
+        return self.get("/lol-champ-select/v1/session", timeout=3)
 
     def asset(self, name):
         return self.get(f"/lol-game-data/assets/v1/{name}.json")
@@ -252,14 +272,19 @@ def _champion_alias(player):
     return raw.rsplit("_", 1)[-1] if raw.startswith("game_character_displayname_") else None
 
 
+def live_game_raw(timeout=2):
+    """完整即時 JSON；採集器保存原文，計算機再另行解析。失敗由呼叫端處理。"""
+    res = requests.get(LIVE_CLIENT_URL, verify=False, timeout=timeout)
+    res.raise_for_status()
+    return res.json()
+
+
 def live_game(timeout=2):
     """對局中的即時資料，整理成計算機要的樣子；不在對局中回 None。
 
     只回英雄、等級、裝備與自己的面板，不回任何玩家名稱（計算機用不到，也不該經過這裡外流）。"""
     try:
-        res = requests.get(LIVE_CLIENT_URL, verify=False, timeout=timeout)
-        res.raise_for_status()
-        data = res.json()
+        data = live_game_raw(timeout)
     except (requests.RequestException, ValueError):
         return None
     return parse_live_game(data)

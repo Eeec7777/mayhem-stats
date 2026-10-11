@@ -57,13 +57,13 @@ class TimelineTests(DbCase):
         self.assertFalse(db.store_timeline(self.conn, "TW2", 1, {"frames": []}))
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM match_timelines").fetchone()[0], 0)
 
-    def test_only_games_ingested_after_collection_started_are_retried(self):
+    def test_all_missing_games_including_old_ones_are_retried(self):
         since = int(self.conn.execute("SELECT value FROM kv WHERE key = 'timeline_since'").fetchone()[0])
-        self.add_match(1, since - 100)  # 開始收之前：不回補
+        self.add_match(1, since - 100)  # 開始收之前的舊場次也回補
         self.add_match(2, since + 10)
         self.add_match(3, since + 20)
         db.store_timeline(self.conn, "TW2", 3, timeline())
-        self.assertEqual(db.games_missing_timeline(self.conn), [("TW2", 2)])
+        self.assertEqual(db.games_missing_timeline(self.conn), [("TW2", 2), ("TW2", 1)])
 
     def test_since_marker_is_not_moved_by_a_later_init(self):
         before = self.conn.execute("SELECT value FROM kv WHERE key = 'timeline_since'").fetchone()[0]

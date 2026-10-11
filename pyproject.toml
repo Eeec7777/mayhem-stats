@@ -8,6 +8,7 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "requests>=2.31",
     "pyyaml>=6",
+    "websockets>=14",
 ]
 
 [tool.uv]
