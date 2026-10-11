@@ -627,16 +627,16 @@ function ChampStrip({
 
 /** 某個人在某些條件下（某隻英雄、某種出裝）的每一場。
  *  是哪幾場交給 Cube 用同一組條件查（和列表上方的場次同一個來源），再送 /api/matches 列出；
- *  帳號換成這個人（matchParams 預設是目前選的帳號），戰報也以他為主角。 */
-function PlayerMatches({ puuid, filters }: { puuid: string; filters: CubeFilter[] }) {
+ *  recordMetric 有值時只取該指標最高的那一場。帳號換成這個人（matchParams 預設是目前選的帳號），戰報也以他為主角。 */
+function PlayerMatches({ puuid, filters, recordMetric }: { puuid: string; filters: CubeFilter[]; recordMetric?: string }) {
   const { apply, matchParams } = useFilters()
   const ids = useCube(
     apply(
       {
-        measures: ["participants.games"],
+        measures: ["participants.games", ...(recordMetric ? [recordMetric] : [])],
         dimensions: ["matches.game_id"],
         filters: [{ member: "participants.puuid", operator: "equals", values: [puuid] }, ...filters],
-        limit: MAX_GAME_IDS,
+        ...(recordMetric ? { order: { [recordMetric]: "desc" as const }, limit: 1 } : { limit: MAX_GAME_IDS }),
       },
       "all",
     ),
@@ -644,7 +644,7 @@ function PlayerMatches({ puuid, filters }: { puuid: string; filters: CubeFilter[
   if (ids.loading) return <Skeleton className="h-40 w-full" />
   if (ids.error) return <div className="text-sm text-destructive">{ids.error}</div>
   const gameIds = ids.rows.map((r) => String(r["matches.game_id"]))
-  if (!gameIds.length) return <EmptyState>這個條件下沒有對局。</EmptyState>
+  if (!gameIds.length) return <EmptyState>{recordMetric ? "找不到創下這項紀錄的對局。" : "這個條件下沒有對局。"}</EmptyState>
   return <MatchList params={{ ...matchParams(), puuid, game_ids: gameIds.join(",") }} puuid={puuid} />
 }
 
@@ -1597,11 +1597,24 @@ const AUGMENT_LOOKUP: LookupKind = {
 // ── 數據總表：每個人的各項平均，分成幾組切換 ─────────────────────────────────
 // 都是「每場先算再平均」的語意層度量；比人時要記得出裝比例不同（射手天生打塔快、坦克天生承傷多），所以最後一組是出裝比例。
 // 對小兵傷害對局資料沒有，用「總輸出 − 對英雄 − 對建築」估計；死亡時間只有賽後統計有（2026-10-03 起）。
-type StatCol = { key: string; label: string; fmt: (v: number) => string; hint: string; lower?: boolean }
+type StatCol = { key: string; label: string; fmt: (v: number) => string; hint: string; lower?: boolean; record?: boolean }
 const int = (v: number) => Math.round(v).toLocaleString()
 const pctFmt = (v: number) => `${v.toFixed(1)}%`
 const mmssFmt = (v: number) => `${Math.floor(v / 60)}:${String(Math.round(v % 60)).padStart(2, "0")}`
+/** matches.avg_duration 的單位是分鐘；畫面統一顯示成遊戲內時鐘 mm:ss。 */
+const durationFmt = (minutes: number) => {
+  const seconds = Math.round(minutes * 60)
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`
+}
 const STAT_SETS: { id: string; label: string; caption: string; cols: StatCol[] }[] = [
+  {
+    id: "overview",
+    label: "整體",
+    caption: "先看每個人的樣本量與平均遊戲時長；時長是每場對局長度的平均，不是把所有分鐘加總",
+    cols: [
+      { key: "matches.avg_duration", label: "平均遊戲時長", fmt: durationFmt, hint: "每場遊戲長度的平均，顯示為 mm:ss" },
+    ],
+  },
   {
     id: "dmg",
     label: "輸出",
@@ -1643,6 +1656,38 @@ const STAT_SETS: { id: string; label: string; caption: string; cols: StatCol[] }
     ],
   },
   {
+    id: "peak",
+    label: "單場巔峰",
+    caption: "每個人最極端的一場：這組是紀錄榜，不是穩定表現評分；死亡相關數字越高只代表曾經死得更密集",
+    cols: [
+      { key: "participants.max_kills", label: "單場最高擊殺", fmt: int, hint: "範圍內單場最高擊殺數", record: true },
+      { key: "participants.max_deaths", label: "單場最高死亡", fmt: int, hint: "範圍內單場最高死亡數；極端紀錄，不代表表現較好", record: true },
+      {
+        key: "participants.max_deaths_per_min",
+        label: "單場最高每分鐘死亡",
+        fmt: (v) => v.toFixed(2),
+        hint: "範圍內單場最高每分鐘死亡數；極端紀錄，不代表表現較好",
+        record: true,
+      },
+      { key: "participants.max_assists", label: "單場最高助攻", fmt: int, hint: "範圍內單場最高助攻數", record: true },
+      { key: "participants.max_damage", label: "單場最高對英雄傷害", fmt: int, hint: "範圍內單場對英雄造成的最高傷害", record: true },
+      { key: "participants.max_dpm", label: "單場最高每分鐘傷害", fmt: int, hint: "範圍內單場最高每分鐘對英雄傷害", record: true },
+      { key: "participants.max_objective_damage", label: "單場最高推塔傷害", fmt: int, hint: "範圍內單場對建築造成的最高傷害", record: true },
+      { key: "participants.max_cc", label: "單場最高控場時間", fmt: (v) => `${Math.round(v)} 秒`, hint: "範圍內單場最高控場時間", record: true },
+      { key: "participants.max_largest_spree", label: "單場最高連殺", fmt: int, hint: "範圍內單場最高連續擊殺數", record: true },
+      { key: "participants.max_largest_multi_kill", label: "單場最高多殺", fmt: (v) => `${Math.round(v)} 殺`, hint: "雙殺為 2、三殺為 3，依此類推", record: true },
+      { key: "participants.max_duration", label: "單場最高時長", fmt: durationFmt, hint: "範圍內單場最長對局時間，顯示為 mm:ss", record: true },
+      { key: "participants.max_taken", label: "單場最高承受傷害", fmt: int, hint: "範圍內單場承受的最高總傷害", record: true },
+      { key: "participants.max_mitigated", label: "單場最高減免傷害", fmt: int, hint: "範圍內單場透過防禦與其他效果減免的最高傷害", record: true },
+      { key: "participants.max_heal", label: "單場最高治療量", fmt: int, hint: "範圍內單場最高總治療量，包含自我治療", record: true },
+      { key: "participants.max_gpm", label: "單場最高每分鐘經濟", fmt: int, hint: "範圍內單場最高每分鐘獲得金錢", record: true },
+      { key: "participants.max_cs", label: "單場最高補兵", fmt: int, hint: "範圍內單場最高擊殺小兵數", record: true },
+      { key: "participants.max_turret_kills", label: "單場最高防禦塔擊殺", fmt: int, hint: "範圍內單場親手摧毀的最高防禦塔數", record: true },
+      { key: "participants.max_penta_kills", label: "單場最高五殺次數", fmt: int, hint: "範圍內單場最高五殺次數", record: true },
+      { key: "participants.max_crit", label: "單場最高單次暴擊傷害", fmt: int, hint: "範圍內單場最高單次暴擊傷害", record: true },
+    ],
+  },
+  {
     id: "push",
     label: "推進與資源",
     caption: "大亂鬥是團戰贏了之後推塔決勝，拆塔是把優勢換成勝利的那一步。射手天生打塔快，比人時看「出裝比例」那組",
@@ -1672,9 +1717,9 @@ function StatsPanel({
   loading: boolean
   profiles: Map<string, Profile>
 }) {
-  const [setId, setSetId] = useState<string>("dmg")
+  const [setId, setSetId] = useState<string>("overview")
   // 點一格：下面列出算進這格的每一場（出裝比例那組只列那種出裝／那種傷害類型的場次）
-  const [drill, setDrill] = useState<{ puuid: string; key: string; label: string } | null>(null)
+  const [drill, setDrill] = useState<{ puuid: string; key: string; label: string; record?: boolean } | null>(null)
   const [sortKey, setSortKey] = useState<string>("participants.avg_damage")
   const isMix = setId === "mix"
   const set = STAT_SETS.find((g) => g.id === setId)
@@ -1698,13 +1743,13 @@ function StatsPanel({
   const best = new Map(
     cols.map((c) => {
       const vals = people.map((p) => valueOf(p.puuid, c.key)).filter((v): v is number => v !== null)
-      return [c.key, isMix || !vals.length ? null : c.lower ? Math.min(...vals) : Math.max(...vals)]
+      return [c.key, isMix || c.record || !vals.length ? null : c.lower ? Math.min(...vals) : Math.max(...vals)]
     }),
   )
   return (
     <Panel
       title="數據總表"
-      caption="每個人的各項平均（每場先算再平均）。切換上方的分組看不同面向；點欄位標題換排序，點數字看算進去的每一場；每欄最好的人標綠（死亡類是越少越好）。比人時記得出裝不同：射手天生打塔快、坦克天生承傷多，可以對照「出裝比例」"
+      caption="每個人的各項平均（每場先算再平均），另有單場巔峰紀錄。切換上方的分組看不同面向；點欄位標題換排序，點數字看算進去的每一場；平均表現的最佳值標綠，單場紀錄維持中性。比人時記得出裝不同：射手天生打塔快、坦克天生承傷多，可以對照「出裝比例」"
     >
       {loading ? (
         <Skeleton className="h-[300px] w-full" />
@@ -1766,9 +1811,13 @@ function StatsPanel({
                             ) : (
                               <button
                                 type="button"
-                                title={`看${splitId(p.riot_id, p.puuid).name}算進「${c.label}」的每一場`}
+                                 title={c.record ? `看${splitId(p.riot_id, p.puuid).name}創下「${c.label}」的那一場` : `看${splitId(p.riot_id, p.puuid).name}算進「${c.label}」的每一場`}
                                 onClick={() =>
-                                  setDrill((cur) => (cur?.puuid === p.puuid && cur.key === c.key ? null : { puuid: p.puuid, key: c.key, label: c.label }))
+                                   setDrill((cur) =>
+                                     cur?.puuid === p.puuid && cur.key === c.key
+                                       ? null
+                                       : { puuid: p.puuid, key: c.key, label: c.label, record: c.record },
+                                   )
                                 }
                                 className="cursor-pointer rounded px-0.5 underline-offset-2 transition hover:bg-accent hover:underline"
                               >
@@ -1791,7 +1840,7 @@ function StatsPanel({
             <div className="space-y-2 border-t pt-3" data-testid="crew-stats-drill">
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <div className="text-sm font-semibold">
-                  {splitId(people.find((x) => x.puuid === drill.puuid)?.riot_id ?? "", drill.puuid).name}・{drill.label}的每一場
+                   {splitId(people.find((x) => x.puuid === drill.puuid)?.riot_id ?? "", drill.puuid).name}・{drill.label}{drill.record ? "的紀錄場" : "的每一場"}
                 </div>
                 <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setDrill(null)}>
                   收起
@@ -1802,12 +1851,15 @@ function StatsPanel({
                   ? `出裝是${drill.key.slice(4)}的場次`
                   : drill.key.includes("time_dead")
                     ? "這一欄只算有賽後統計的場次；下面列出範圍內全部的場次，舊場次沒有死亡時間"
-                    : "這一欄是下面這些場次的平均"}
+                    : drill.record
+                      ? "只顯示創下這項單場紀錄的那一場"
+                      : "這一欄是下面這些場次的平均"}
               </p>
               <PlayerMatches
                 key={`${drill.puuid}|${drill.key}`}
                 puuid={drill.puuid}
                 filters={drill.key.startsWith("mix:") ? [{ member: "builds.build_role", operator: "equals", values: [drill.key.slice(4)] }] : []}
+                recordMetric={drill.record ? drill.key : undefined}
               />
             </div>
           )}

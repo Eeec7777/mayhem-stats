@@ -544,6 +544,185 @@ cubes:
           decimals: 1
           higherIsBetter: false
 
+      # 單場巔峰紀錄：和 avg_* 分開，避免把「平均表現」誤當成「最好的一場」。
+      - name: max_kills
+        title: 單場最高擊殺
+        description: "範圍內單場最高擊殺數。"
+        sql: kills
+        type: max
+        meta:
+          group: 單場紀錄
+          decimals: 0
+
+      - name: max_deaths
+        title: 單場最高死亡
+        description: "範圍內單場最高死亡數；這是極端紀錄，不代表表現較好。"
+        sql: deaths
+        type: max
+        meta:
+          group: 單場紀錄
+          decimals: 0
+          higherIsBetter: false
+
+      - name: max_deaths_per_min
+        title: 單場最高每分鐘死亡
+        description: "範圍內單場最高的每分鐘死亡數；用來找出最密集的死亡場次，不代表表現較好。"
+        sql: "{CUBE}.deaths * 60.0 / NULLIF({CUBE}.game_duration, 0)"
+        type: max
+        meta:
+          group: 單場紀錄
+          unit: 每分鐘
+          decimals: 2
+          higherIsBetter: false
+
+      - name: max_assists
+        title: 單場最高助攻
+        description: "範圍內單場最高助攻數。"
+        sql: assists
+        type: max
+        meta:
+          group: 單場紀錄
+          decimals: 0
+
+      - name: max_damage
+        title: 單場最高對英雄傷害
+        description: "範圍內單場對英雄造成的最高傷害。"
+        sql: dmg_to_champions
+        type: max
+        meta:
+          group: 單場紀錄
+          decimals: 0
+
+      - name: max_dpm
+        title: 單場最高每分鐘傷害
+        description: "範圍內單場最高的每分鐘對英雄傷害。"
+        sql: "{CUBE}.dmg_to_champions * 60.0 / NULLIF({CUBE}.game_duration, 0)"
+        type: max
+        meta:
+          group: 單場紀錄
+          unit: 每分鐘
+          decimals: 0
+
+      - name: max_objective_damage
+        title: 單場最高推塔傷害
+        description: "範圍內單場對建築造成的最高傷害。"
+        sql: dmg_to_objectives
+        type: max
+        meta:
+          group: 單場紀錄
+          decimals: 0
+
+      - name: max_cc
+        title: 單場最高控場時間
+        description: "範圍內單場對敵人施加的最高控場時間。"
+        sql: cc_duration
+        type: max
+        meta:
+          group: 單場紀錄
+          unit: 秒
+          decimals: 0
+
+      - name: max_largest_spree
+        title: 單場最高連殺
+        description: "範圍內單場最高連續擊殺數。"
+        sql: largest_spree
+        type: max
+        meta:
+          group: 單場紀錄
+          decimals: 0
+
+      - name: max_largest_multi_kill
+        title: 單場最高多殺
+        description: "範圍內單場最高多殺等級：雙殺為 2，三殺為 3，依此類推。"
+        sql: largest_multi_kill
+        type: max
+        meta:
+          group: 單場紀錄
+          decimals: 0
+
+      - name: max_duration
+        title: 單場最高時長
+        description: "範圍內單場最長對局時間。"
+        sql: "{CUBE}.game_duration / 60.0"
+        type: max
+        meta:
+          group: 單場紀錄
+          unit: 分鐘
+          decimals: 2
+
+      - name: max_taken
+        title: 單場最高承受傷害
+        description: "範圍內單場承受的最高總傷害。"
+        sql: dmg_taken
+        type: max
+        meta:
+          group: 單場紀錄
+          decimals: 0
+
+      - name: max_mitigated
+        title: 單場最高減免傷害
+        description: "範圍內單場透過護甲、魔抗與其他效果減免的最高傷害。"
+        sql: dmg_mitigated
+        type: max
+        meta:
+          group: 單場紀錄
+          decimals: 0
+
+      - name: max_heal
+        title: 單場最高治療量
+        description: "範圍內單場最高總治療量，包含自我治療。"
+        sql: total_heal
+        type: max
+        meta:
+          group: 單場紀錄
+          decimals: 0
+
+      - name: max_gpm
+        title: 單場最高每分鐘經濟
+        description: "範圍內單場最高每分鐘獲得金錢。"
+        sql: "{CUBE}.gold_earned * 60.0 / NULLIF({CUBE}.game_duration, 0)"
+        type: max
+        meta:
+          group: 單場紀錄
+          unit: 每分鐘
+          decimals: 0
+
+      - name: max_cs
+        title: 單場最高補兵
+        description: "範圍內單場最高擊殺小兵數。"
+        sql: cs
+        type: max
+        meta:
+          group: 單場紀錄
+          decimals: 0
+
+      - name: max_turret_kills
+        title: 單場最高防禦塔擊殺
+        description: "範圍內單場親手摧毀的最高防禦塔數。"
+        sql: turret_kills
+        type: max
+        meta:
+          group: 單場紀錄
+          decimals: 0
+
+      - name: max_penta_kills
+        title: 單場最高五殺次數
+        description: "範圍內單場最高五殺次數。"
+        sql: penta_kills
+        type: max
+        meta:
+          group: 單場紀錄
+          decimals: 0
+
+      - name: max_crit
+        title: 單場最高單次暴擊傷害
+        description: "範圍內單場最高單次暴擊傷害。"
+        sql: largest_crit
+        type: max
+        meta:
+          group: 單場紀錄
+          decimals: 0
+
       - name: avg_time_dead
         title: 平均死亡時間
         description: "每場平均在死亡倒數裡的總秒數（totalTimeSpentDead）。對局明細沒有這個欄位，只有賽後統計有：只算開始擷取賽後統計之後、而且採集器有抓到賽後畫面的場次（場數見 time_dead_games）。"
