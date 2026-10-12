@@ -1908,13 +1908,23 @@ const asClock = (minutes: number) => {
 }
 
 function MinuteRecords({ scoped }: { scoped: (query: CubeQuery) => CubeQuery | null }) {
-  const { matchParams } = useFilters()
+  const { account, matchParams } = useFilters()
   const [key, setKey] = useState(MINUTE_RECORDS[0].key)
   // 展開了戰報的那一次（換指標就收起來）
   const [cardsOpen, setCardsOpen] = useState(false)
   const metric = MINUTE_RECORDS.find((m) => m.key === key) ?? MINUTE_RECORDS[0]
+  // 中心帳號：「切換帳號」目前選的那個（預設是本機帳號）。只算他也在場的對局。
+  const centerName = account ? splitRiotId(account.riot_id, account.puuid).name : ""
+  const onCenter = (query: CubeQuery): CubeQuery | null =>
+    account
+      ? scoped({
+          ...query,
+          // 一對多 join 的等值篩選（game_players，說明在 cube/model/cubes/dimensions.yml）；max 指標不怕它造成的重複列
+          filters: [{ member: "game_players.puuid", operator: "equals", values: [account.puuid] }, ...(query.filters ?? [])],
+        })
+      : null
   const top = useCube(
-    scoped({
+    onCenter({
       measures: [metric.key],
       dimensions: [
         "participants.participant_key",
@@ -1933,7 +1943,7 @@ function MinuteRecords({ scoped }: { scoped: (query: CubeQuery) => CubeQuery | n
   return (
     <Panel
       title="單場每分鐘紀錄"
-      caption={`比較對象的每一場裡，這個指標最高的前 ${TOP_N} 場。數據總表「單場巔峰」看的是每人一格，這裡看的是哪幾場。跟著上方的模式與期間篩選。`}
+      caption={`只算「${centerName || "中心"}」也在場的對局：比較對象在這些場裡，這個指標最高的前 ${TOP_N} 場。數據總表「單場巔峰」看的是每人一格，這裡看的是哪幾場。用上方的「切換帳號」換中心，跟著模式與期間篩選。`}
       action={
         drill && (
           <Button size="sm" variant={cardsOpen ? "secondary" : "outline"} onClick={() => setCardsOpen((v) => !v)}>
@@ -1961,12 +1971,14 @@ function MinuteRecords({ scoped }: { scoped: (query: CubeQuery) => CubeQuery | n
         ))}
       </ToggleGroup>
 
-      {top.error ? (
+      {!account ? (
+        <EmptyState>還沒有中心帳號，用上方的「切換帳號」選一個。</EmptyState>
+      ) : top.error ? (
         <QueryError error={top.error} />
       ) : top.loading ? (
         <Skeleton className="h-[360px] w-full" />
       ) : !top.rows.length ? (
-        <EmptyState>這個條件下沒有對局。</EmptyState>
+        <EmptyState>{centerName} 在這個模式與期間裡沒有對局。</EmptyState>
       ) : (
         <>
           <ol className="divide-y divide-border/50">

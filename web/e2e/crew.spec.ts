@@ -484,13 +484,16 @@ test("好友比較頁：不再出現固定門檻的「適合／不適合」標�
   await expect(panel(page, "全員一覽").getByTestId("crew-row").getByText(/適合/)).toHaveCount(0)
 })
 
-/** 比較對象（站長＋追蹤中的帳號）每一場的某個每分鐘數值，由高到低前 10 場。獨立手寫，不經過語意層。 */
+/** 比較對象（站長＋追蹤中的帳號）裡，中心（預設站長自己）也在場的每一場，某個每分鐘數值由高到低前 10 場。獨立手寫，不經過語意層。 */
 const minuteTop = (numerator: string) =>
   sql(
     `SELECT ${numerator} * 60.0 / NULLIF(p.game_duration, 0) AS v
        FROM match_participants p JOIN matches m USING (platform_id, game_id)
       WHERE m.queue_id = 2400 AND m.is_remake = 0 AND p.game_duration > 0
         AND p.puuid IN (SELECT puuid FROM accounts WHERE is_me = 1 OR tracked = 1)
+        AND EXISTS (SELECT 1 FROM match_participants c
+                     WHERE c.platform_id = p.platform_id AND c.game_id = p.game_id
+                       AND c.puuid IN (SELECT puuid FROM accounts WHERE is_me = 1))
         AND ${numerator} IS NOT NULL
       ORDER BY v DESC LIMIT 10`,
   ).map((r) => Number(r.v))
@@ -500,7 +503,7 @@ test.describe("好友比較頁：單場每分鐘紀錄", () => {
     await openPage(page, "crew")
   })
 
-  test("預設是每分鐘擊殺：前 10 場由高到低，數值和獨立 SQL 一致（比較對象的每一場，沒有中心）", async ({ page }) => {
+  test("預設是每分鐘擊殺：前 10 場由高到低，數值和獨立 SQL 一致（只算中心也在場的對局）", async ({ page }) => {
     const p = panel(page, "單場每分鐘紀錄")
     const want = minuteTop("p.kills").map((v) => v.toFixed(2))
     await expect(p.getByTestId("minute-record-game")).toHaveCount(want.length)
