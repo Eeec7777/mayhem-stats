@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react"
+import { Fragment, createContext, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react"
 import { ArrowRight, Check, ChevronDown, ChevronsUpDown, Search } from "lucide-react"
 import { RecordCell } from "@/components/cells"
 import { ContribBars, ContribScore } from "@/components/Contribution"
@@ -74,6 +74,10 @@ const dev = (r: CubeRow | undefined) => {
 }
 
 const splitId = splitRiotId
+
+/** 中心（選填）的場次篩選：設了中心就是「他也在場」這一個條件，整頁的查詢都要加上；沒設是空的。
+ *  用 context 傳下去，抽屜與戰報列表不必一路帶參數。 */
+const CenterFilterContext = createContext<CubeFilter[]>([])
 
 function PlayerName({ player, className }: { player: Player; className?: string }) {
   const { name, tag } = splitId(player.riot_id, player.puuid)
@@ -631,12 +635,13 @@ function ChampStrip({
  *  recordMetric 有值時只取該指標最高的那一場。帳號換成這個人（matchParams 預設是目前選的帳號），戰報也以他為主角。 */
 function PlayerMatches({ puuid, filters, recordMetric }: { puuid: string; filters: CubeFilter[]; recordMetric?: string }) {
   const { apply, matchParams } = useFilters()
+  const centerFilters = useContext(CenterFilterContext)
   const ids = useCube(
     apply(
       {
         measures: ["participants.games", ...(recordMetric ? [recordMetric] : [])],
         dimensions: ["matches.game_id"],
-        filters: [{ member: "participants.puuid", operator: "equals", values: [puuid] }, ...filters],
+        filters: [{ member: "participants.puuid", operator: "equals", values: [puuid] }, ...centerFilters, ...filters],
         ...(recordMetric ? { order: { [recordMetric]: "desc" as const }, limit: 1 } : { limit: MAX_GAME_IDS }),
       },
       "all",
@@ -1075,15 +1080,16 @@ function PlayerDrawerBody({
   const ownWr = profile.overall.winrate
   const own: Own = { score: profile.overall.score, winrate: ownWr }
   const roleFilter = role ? [{ member: "builds.build_role", operator: "equals" as const, values: [role] }] : []
+  const centerFilters = useContext(CenterFilterContext)
   const contrib = useCube(
-    apply({ measures: PERF_MEASURES, filters: [crewFilter([player.puuid]), ...roleFilter], limit: 1 }, "all"),
+    apply({ measures: PERF_MEASURES, filters: [crewFilter([player.puuid]), ...roleFilter, ...centerFilters], limit: 1 }, "all"),
   )
   const champs = useCube(
     apply(
       {
         measures: STAT_MEASURES,
         dimensions: ["champions.name", "champions.icon_path"],
-        filters: [crewFilter([player.puuid]), ...roleFilter],
+        filters: [crewFilter([player.puuid]), ...roleFilter, ...centerFilters],
         order: { "participants.games": "desc" },
         limit: NO_LIMIT,
       },
@@ -1919,8 +1925,6 @@ function MinuteRecords({ scoped, center }: { scoped: (query: CubeQuery) => CubeQ
   const centerName = center ? splitRiotId(center.riot_id, center.puuid).name : ""
   const top = useCube(
     scoped({
-      // 一對多 join 的等值篩選（game_players，說明在 cube/model/cubes/dimensions.yml）；max 指標不怕它造成的重複列
-      ...(center ? { filters: [{ member: "game_players.puuid", operator: "equals", values: [center.puuid] }] } : {}),
       measures: [metric.key],
       dimensions: [
         "participants.participant_key",
@@ -2086,11 +2090,16 @@ export function Crew() {
   // 中心（選填）：在上面的「比較對象」決定，目前只影響「單場每分鐘紀錄」。沒設就是整群比較對象一起比。
   const [centerId, setCenterId] = useState<string | null>(null)
   const center = crew.find((p) => p.puuid === centerId) ?? null
+  // 中心的場次條件（一對多 join 的等值篩選，說明在 cube/model/cubes/dimensions.yml 的 game_players）
+  const centerFilters = useMemo<CubeFilter[]>(
+    () => (center ? [{ member: "game_players.puuid", operator: "equals", values: [center.puuid] }] : []),
+    [center],
+  )
 
   // 全域條件（模式、期間、下鑽）照套，但不鎖定帳號（scope "all"），改成鎖定這群人。equals 給多個值就是 IN。
   const crewFilter = (ids: string[]): CubeFilter => ({ member: "participants.puuid", operator: "equals", values: ids })
   const q = (query: CubeQuery): CubeQuery | null =>
-    puuids.length ? apply({ ...query, filters: [crewFilter(puuids), ...(query.filters ?? [])] }, "all") : null
+    puuids.length ? apply({ ...query, filters: [crewFilter(puuids), ...centerFilters, ...(query.filters ?? [])] }, "all") : null
 
   const summary = useCube(
     q({ measures: [...STAT_MEASURES, "participants.kda", ...PERF_PARTS.map((c) => c.key)], dimensions: ["participants.puuid"], limit: NO_LIMIT }),
@@ -2112,8 +2121,8 @@ export function Crew() {
   // 出裝的傷害類型（AD／AP）：玩家類型與數據總表的出裝比例用
   const dmgTypes = useCube(q({ measures: ["participants.games"], dimensions: ["participants.puuid", "builds.damage_type"], limit: NO_LIMIT }))
   // 參照列：所有參賽者的出裝比例（不鎖玩家，也不受上方「拿掉誰」影響）
-  const everyone = useCube(apply({ measures: ["participants.games", "participants.winrate", "participants.kda"] }, "all"))
-  const everyoneRoles = useCube(apply({ measures: ["participants.games"], dimensions: ["builds.build_role"], limit: NO_LIMIT }, "all"))
+  const everyone = useCube(apply({ measures: ["participants.games", "participants.winrate", "participants.kda"], filters: centerFilters }, "all"))
+  const everyoneRoles = useCube(apply({ measures: ["participants.games"], dimensions: ["builds.build_role"], filters: centerFilters, limit: NO_LIMIT }, "all"))
   const error = summary.error ?? roles.error ?? champs.error ?? augments.error ?? everyone.error ?? everyoneRoles.error ?? stats.error ?? dmgTypes.error
   const loading = summary.loading || roles.loading || champs.loading || augments.loading || everyone.loading || everyoneRoles.loading
 
@@ -2176,6 +2185,7 @@ export function Crew() {
   const open = (puuid: string, role: string | null, tab: DrawerTab, champ?: string) => setFocus({ puuid, role, tab, champ })
 
   return (
+    <CenterFilterContext.Provider value={centerFilters}>
     <div className="space-y-4">
       {error && <QueryError error={error} />}
 
@@ -2227,7 +2237,7 @@ export function Crew() {
               </ToggleGroupItem>
             ))}
           </ToggleGroup>
-          <span className="text-[11px] text-muted-foreground">目前只影響「單場每分鐘紀錄」：只算中心也在場的對局</span>
+          <span className="text-[11px] text-muted-foreground">選了中心，整頁都只算他也在場的場次</span>
         </div>
       </Panel>
 
@@ -2395,5 +2405,6 @@ export function Crew() {
         )}
       </DetailDrawer>
     </div>
+    </CenterFilterContext.Provider>
   )
 }
