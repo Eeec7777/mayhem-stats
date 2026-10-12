@@ -1907,15 +1907,15 @@ const asClock = (minutes: number) => {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`
 }
 
-function MinuteRecords({ scoped, members }: { scoped: (query: CubeQuery) => CubeQuery | null; members: Player[] }) {
+function MinuteRecords({ scoped, center }: { scoped: (query: CubeQuery) => CubeQuery | null; center: Player | null }) {
   const { matchParams } = useFilters()
   const [key, setKey] = useState(MINUTE_RECORDS[0].key)
-  // 展開了戰報的那一次（換指標或換中心就收起來）
+  // 展開了整批戰報的那一次（換指標或中心就收起來）
   const [cardsOpen, setCardsOpen] = useState(false)
+  // 點了其中一列：只看那一場。記下當時的指標與中心，換了任何一個就自動失效，不用另外清
+  const [pick, setPick] = useState<{ id: string; metric: string; center: string | null } | null>(null)
   const metric = MINUTE_RECORDS.find((m) => m.key === key) ?? MINUTE_RECORDS[0]
-  // 中心是選填的。沒設（null）就是整群比較對象的每一場一起比，和原本一樣；設了才只算他也在場的對局。
-  const [centerId, setCenterId] = useState<string | null>(null)
-  const center = members.find((m) => m.puuid === centerId) ?? null
+  const centerId = center?.puuid ?? null
   const centerName = center ? splitRiotId(center.riot_id, center.puuid).name : ""
   const top = useCube(
     scoped({
@@ -1935,15 +1935,19 @@ function MinuteRecords({ scoped, members }: { scoped: (query: CubeQuery) => Cube
     }),
   )
   const drill = top.rows.length ? participantRows(top.rows) : null
+  const picked = pick && pick.metric === metric.key && pick.center === centerId ? pick : null
+  const pickedIndex = picked ? top.rows.findIndex((r) => String(r["participants.participant_key"]) === picked.id) : -1
+  const pickedRow = pickedIndex >= 0 ? top.rows[pickedIndex] : null
+  const pickedDrill = pickedRow ? participantRows([pickedRow]) : null
+  const togglePick = (id: string) =>
+    setPick((cur) => (cur && cur.id === id && cur.metric === metric.key && cur.center === centerId ? null : { id, metric: metric.key, center: centerId }))
 
   return (
     <Panel
       title="單場每分鐘紀錄"
       caption={`${
-        center
-          ? `只算「${centerName}」也在場的對局：比較對象在這些場裡`
-          : "沒設中心，比較對象的每一場一起比"
-      }，這個指標最高的前 ${TOP_N} 場。數據總表「單場巔峰」看的是每人一格，這裡看的是哪幾場。跟著模式與期間篩選。`}
+        center ? `只算「${centerName}」也在場的對局：比較對象在這些場裡` : "沒設中心，比較對象的每一場一起比"
+      }，這個指標最高的前 ${TOP_N} 場。點一列看那一場；數據總表「單場巔峰」看的是每人一格。跟著模式與期間篩選。`}
       action={
         drill && (
           <Button size="sm" variant={cardsOpen ? "secondary" : "outline"} onClick={() => setCardsOpen((v) => !v)}>
@@ -1952,32 +1956,6 @@ function MinuteRecords({ scoped, members }: { scoped: (query: CubeQuery) => Cube
         )
       }
     >
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <span className="text-xs text-muted-foreground">中心</span>
-        <ToggleGroup
-          type="single"
-          size="sm"
-          variant="outline"
-          value={center?.puuid ?? "none"}
-          onValueChange={(v) => {
-            // 點已經選的那個會取消（v 是空字串），取消就等於不設
-            setCenterId(!v || v === "none" ? null : v)
-            setCardsOpen(false)
-          }}
-          className="flex-wrap justify-start"
-        >
-          <ToggleGroupItem value="none">不設</ToggleGroupItem>
-          {members.map((m) => {
-            const name = splitRiotId(m.riot_id, m.puuid).name
-            return (
-              <ToggleGroupItem key={m.puuid} value={m.puuid} title={`只算 ${name} 也在場的對局`}>
-                {name}
-              </ToggleGroupItem>
-            )
-          })}
-        </ToggleGroup>
-      </div>
-
       <ToggleGroup
         type="single"
         size="sm"
@@ -2007,45 +1985,75 @@ function MinuteRecords({ scoped, members }: { scoped: (query: CubeQuery) => Cube
         <>
           <ol className="divide-y divide-border/50">
             {top.rows.map((r, i) => {
+              const id = String(r["participants.participant_key"])
+              const active = picked?.id === id
               const value = num(r[metric.key])
               const minutes = num(r["matches.duration_minutes"])
               const { name, tag } = splitRiotId(r["participants.riot_id"] as string | null, "—")
               return (
                 <li
-                  key={String(r["participants.participant_key"])}
+                  key={id}
                   data-testid="minute-record-game"
-                  className="slide-in flex items-center gap-3 py-2"
+                  className="slide-in"
                   style={{ "--stagger": `${Math.min(i * 30, 400)}ms` } as CSSProperties}
                 >
-                  <span className="w-5 shrink-0 text-right font-mono text-xs font-bold tabular-nums text-muted-foreground">{i + 1}</span>
-                  <img
-                    src={iconUrl(r["champions.icon_path"] as string | null)}
-                    alt={String(r["champions.name"] ?? "")}
-                    className="size-8 shrink-0 rounded-md bg-icon-tile"
-                  />
-                  <span className="flex min-w-0 flex-1 flex-col">
-                    <span className="flex min-w-0 items-baseline gap-1">
-                      <span className="truncate text-sm font-medium">{name}</span>
-                      {tag && <span className="shrink-0 text-[11px] text-muted-foreground">{tag}</span>}
-                    </span>
-                    <span className="truncate text-[11px] text-muted-foreground">
-                      {String(r["champions.name"] ?? "—")} · {String(r["matches.local_date"] ?? "—")}
-                      {minutes !== null && ` · ${asClock(minutes)}`}
-                    </span>
-                  </span>
-                  <span
-                    data-testid="minute-record-value"
+                  <button
+                    type="button"
+                    aria-pressed={active}
+                    title="點一下看這一場"
+                    onClick={() => togglePick(id)}
                     className={cn(
-                      "shrink-0 font-mono text-sm font-semibold tabular-nums",
-                      metric.tone === "bad" ? "text-loss" : "text-foreground",
+                      "flex w-full cursor-pointer items-center gap-3 rounded py-2 text-left transition hover:bg-accent/60",
+                      active && "bg-primary/10",
                     )}
                   >
-                    {value === null ? "—" : metric.fmt(value)}
-                  </span>
+                    <span className="w-5 shrink-0 text-right font-mono text-xs font-bold tabular-nums text-muted-foreground">{i + 1}</span>
+                    <img
+                      src={iconUrl(r["champions.icon_path"] as string | null)}
+                      alt={String(r["champions.name"] ?? "")}
+                      className="size-8 shrink-0 rounded-md bg-icon-tile"
+                    />
+                    <span className="flex min-w-0 flex-1 flex-col">
+                      <span className="flex min-w-0 items-baseline gap-1">
+                        <span className="truncate text-sm font-medium">{name}</span>
+                        {tag && <span className="shrink-0 text-[11px] text-muted-foreground">{tag}</span>}
+                      </span>
+                      <span className="truncate text-[11px] text-muted-foreground">
+                        {String(r["champions.name"] ?? "—")} · {String(r["matches.local_date"] ?? "—")}
+                        {minutes !== null && ` · ${asClock(minutes)}`}
+                      </span>
+                    </span>
+                    <span
+                      data-testid="minute-record-value"
+                      className={cn(
+                        "shrink-0 font-mono text-sm font-semibold tabular-nums",
+                        metric.tone === "bad" ? "text-loss" : "text-foreground",
+                      )}
+                    >
+                      {value === null ? "—" : metric.fmt(value)}
+                    </span>
+                  </button>
                 </li>
               )
             })}
           </ol>
+
+          {/* 點一列：和數據總表「單場巔峰」一樣，在下面列出那一場，點卡片看完整戰報 */}
+          {pickedRow && pickedDrill && (
+            <div className="reveal mt-3 space-y-2 border-t pt-3" data-testid="minute-record-drill">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <div className="text-sm font-semibold">
+                  {splitRiotId(pickedRow["participants.riot_id"] as string | null, "—").name}・{metric.label}・第 {pickedIndex + 1} 名
+                </div>
+                <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setPick(null)}>
+                  收起
+                </Button>
+              </div>
+              <p className="text-[11px] text-muted-foreground">只顯示這一場；點卡片看完整戰報。</p>
+              <MatchList key={String(pickedRow["participants.participant_key"])} params={{ ...matchParams(), ...pickedDrill.params }} showPlayer />
+            </div>
+          )}
+
           {cardsOpen && drill && (
             <div className="reveal mt-3 border-t pt-3">
               {/* 逐場卡片一律走 /api/matches；是哪幾場由上面那個 Cube 查詢決定（participants=遊戲:參賽者） */}
@@ -2074,6 +2082,10 @@ export function Crew() {
     focusPlayer ? `${splitId(focusPlayer.riot_id, focusPlayer.puuid).name}${focus?.role ? `・${focus.role}` : ""}` : null,
     () => setFocus(null),
   )
+
+  // 中心（選填）：在上面的「比較對象」決定，目前只影響「單場每分鐘紀錄」。沒設就是整群比較對象一起比。
+  const [centerId, setCenterId] = useState<string | null>(null)
+  const center = crew.find((p) => p.puuid === centerId) ?? null
 
   // 全域條件（模式、期間、下鑽）照套，但不鎖定帳號（scope "all"），改成鎖定這群人。equals 給多個值就是 IN。
   const crewFilter = (ids: string[]): CubeFilter => ({ member: "participants.puuid", operator: "equals", values: ids })
@@ -2197,6 +2209,25 @@ export function Crew() {
               </button>
             )
           })}
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t pt-3">
+          <span className="text-xs text-muted-foreground">中心（選填）</span>
+          <ToggleGroup
+            type="single"
+            size="sm"
+            variant="outline"
+            value={center?.puuid ?? "none"}
+            onValueChange={(v) => setCenterId(!v || v === "none" ? null : v)}
+            className="flex-wrap justify-start"
+          >
+            <ToggleGroupItem value="none">不設</ToggleGroupItem>
+            {crew.map((p) => (
+              <ToggleGroupItem key={p.puuid} value={p.puuid} title={`中心設為 ${splitId(p.riot_id, p.puuid).name}`}>
+                {splitId(p.riot_id, p.puuid).name}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+          <span className="text-[11px] text-muted-foreground">目前只影響「單場每分鐘紀錄」：只算中心也在場的對局</span>
         </div>
       </Panel>
 
@@ -2330,7 +2361,7 @@ export function Crew() {
 
       <StatsPanel people={ordered} rows={stats.rows} loading={loading || stats.loading} profiles={profiles} />
 
-      <MinuteRecords scoped={q} members={crew} />
+      <MinuteRecords scoped={q} center={center} />
 
       {/* ── 查英雄、查增幅裝置：選一個，看每個人用它的勝率與貢獻 ── */}
       {/* 兩個面板一樣的結構，寬螢幕（1900px 以上，展開的對局卡片才放得進半版）左右並排，其餘上下疊 */}

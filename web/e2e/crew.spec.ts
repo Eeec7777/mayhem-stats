@@ -532,19 +532,38 @@ test.describe("好友比較頁：單場每分鐘紀錄的中心（選填）", ()
     await openPage(page, "crew")
   })
 
-  test("選一位中心：列表只算他也在場的對局；再按一次取消，回到不設中心", async ({ page }) => {
+  test("中心在「比較對象」決定：列表只算他也在場的對局；再按一次取消，回到不設中心", async ({ page }) => {
     const p = panel(page, "單場每分鐘紀錄")
+    const picker = panel(page, "比較對象")
     const me = crewMembers().find((m) => m.is_me === 1)!
     const meName = nameOf(me.riot_id)
     const values = () => p.getByTestId("minute-record-value").allInnerTexts()
 
-    await p.getByRole("button", { name: meName, exact: true }).click()
+    await picker.getByRole("button", { name: meName, exact: true }).click()
     const withCenter = minuteTop("p.kills", me.puuid).map((v) => v.toFixed(2))
     await expect(p.getByTestId("minute-record-game")).toHaveCount(withCenter.length)
     expect(await values()).toEqual(withCenter)
 
-    await p.getByRole("button", { name: meName, exact: true }).click()
+    await picker.getByRole("button", { name: "不設", exact: true }).click()
     const noCenter = minuteTop("p.kills").map((v) => v.toFixed(2))
     await expect.poll(values).toEqual(noCenter)
+  })
+})
+
+test.describe("好友比較頁：單場每分鐘紀錄點一列看那一場", () => {
+  test.beforeEach(async ({ page }) => {
+    await openPage(page, "crew")
+  })
+
+  test("點第一列：下面列出那一場（只顯示這一場），再點一次收起", async ({ page }) => {
+    const p = panel(page, "單場每分鐘紀錄")
+    const first = p.getByTestId("minute-record-game").first()
+    await first.locator("button").click()
+    const drill = p.getByTestId("minute-record-drill")
+    await expect(drill).toBeVisible()
+    await expect(drill).toContainText("只顯示這一場")
+    await expect(drill).toContainText("第 1 名")
+    await first.locator("button").click()
+    await expect(p.getByTestId("minute-record-drill")).toHaveCount(0)
   })
 })
