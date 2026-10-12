@@ -367,7 +367,8 @@ export function AppShell({
       {/* 透明底：讓 body 的主題光暈與格線透出來 */}
       {/* min-w-0：flex 子元素預設 min-width: auto，內容一寬就把整塊推出視窗（768px 寬時對局紀錄、好友比較橫向溢出） */}
       <SidebarInset className="min-w-0 bg-transparent">
-        <header className="sticky top-0 z-20 flex flex-col gap-3 border-b bg-background/85 px-5 py-3 backdrop-blur">
+        {/* id 給好友比較的分頁列量高度：標題列會換行，分頁列要貼在它正下方 */}
+        <header id="app-header" className="sticky top-0 z-20 flex flex-col gap-3 border-b bg-background/85 px-5 py-3 backdrop-blur">
           <div className="flex flex-wrap items-center gap-3">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="!h-5" />

@@ -23,7 +23,7 @@ const isMember = (text: string, m: { riot_id: string }) => {
 const record = (puuid: string) =>
   sql(
     `SELECT COUNT(*) games, SUM(p.win) wins, AVG(p.kills) k, AVG(p.deaths) d, AVG(p.assists) a
-       FROM match_participants p JOIN matches m USING (platform_id, game_id) WHERE p.puuid = ? AND m.queue_id = 2400`,
+       FROM match_participants p JOIN matches m USING (platform_id, game_id) WHERE p.puuid = ? AND m.queue_id = 2400 AND m.is_remake = 0`,
     [puuid],
   )[0]
 
@@ -33,27 +33,59 @@ test.describe("好友比較頁：比較對象", () => {
   })
 
   test("每位好友一顆標籤（含自己），預設全部勾選", async ({ page }) => {
-    const chips = panel(page, "比較對象").locator("button")
+    const chips = panel(page, "比較對象").getByTestId("crew-chip")
     await expect(chips).toHaveCount(crewMembers().length)
     for (const c of await chips.all()) await expect(c).toHaveClass(/border-primary\/50/)
   })
 
   test("點名字拿掉：全員一覽少一列；再點加回來；最後一個拿不掉", async ({ page }) => {
-    const chips = panel(page, "比較對象").locator("button")
+    const chips = panel(page, "比較對象").getByTestId("crew-chip")
+    const toggle = (i: number) => chips.nth(i).locator("button").first()
     const rows = () => panel(page, "全員一覽").getByTestId("crew-row")
     const n = crewMembers().length
     await expect(rows()).toHaveCount(n)
-    await chips.last().click()
+    await toggle(n - 1).click()
     await expect(rows()).toHaveCount(n - 1)
-    await expect(chips.last()).toHaveClass(/opacity-60/)
-    await chips.last().click()
+    await expect(chips.nth(n - 1)).toHaveClass(/opacity-60/)
+    await toggle(n - 1).click()
     await expect(rows()).toHaveCount(n)
     // 全部拿掉到剩一個
-    for (let i = 1; i < n; i++) await chips.nth(i).click()
+    for (let i = 1; i < n; i++) await toggle(i).click()
     await expect(rows()).toHaveCount(1)
-    await chips.first().click()
+    await toggle(0).click()
     await expect(rows()).toHaveCount(1)
-    await expect(chips.first()).toHaveClass(/border-primary\/50/)
+    await expect(chips.nth(0)).toHaveClass(/border-primary\/50/)
+  })
+})
+
+test.describe("好友比較頁：頂層分頁與範圍列", () => {
+  test.beforeEach(async ({ page }) => {
+    await openPage(page, "crew")
+  })
+
+  test("四個分頁一次只看一段；捲下去時分頁列貼在頁首正下方；調整比較對象回到最上面", async ({ page }) => {
+    await expect(page.getByRole("tab", { name: "全員一覽", exact: true })).toHaveAttribute("data-state", "active")
+    await expect(panel(page, "全員一覽")).toBeVisible()
+    await expect(panel(page, "數據總表")).toHaveCount(0)
+    await page.getByRole("tab", { name: "數據總表", exact: true }).click()
+    await expect(panel(page, "數據總表")).toBeVisible()
+    await expect(panel(page, "全員一覽")).toHaveCount(0)
+    await page.getByRole("tab", { name: "查英雄", exact: true }).click()
+    await expect(panel(page, "查英雄")).toBeVisible()
+    await page.getByRole("tab", { name: "查增幅裝置", exact: true }).click()
+    await expect(panel(page, "查增幅裝置")).toBeVisible()
+
+    await page.evaluate(() => window.scrollTo(0, 600))
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0)
+    const gap = await page.evaluate(() => {
+      const bar = document.querySelector('[data-testid="crew-sticky"]')!.getBoundingClientRect().top
+      const head = document.getElementById("app-header")!.getBoundingClientRect().bottom
+      return Math.abs(bar - head)
+    })
+    expect(gap).toBeLessThan(2)
+
+    await page.getByRole("button", { name: "調整比較對象", exact: true }).click()
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0)
   })
 })
 
@@ -97,7 +129,7 @@ function expectedCells(puuid: string): Record<string, Cell> {
        FROM match_participants p JOIN matches m USING (platform_id, game_id)
        LEFT JOIN mat_builds b ON b.participant_rowid = p.rowid
        LEFT JOIN mat_contribution c ON c.participant_rowid = p.rowid
-      WHERE p.puuid = ? AND m.queue_id = 2400 GROUP BY b.build_role`,
+      WHERE p.puuid = ? AND m.queue_id = 2400 AND m.is_remake = 0 GROUP BY b.build_role`,
     [puuid],
   )
   const k = rows.filter((r) => ROLES.includes(String(r.role)) && Number(r.scored) >= 5).length
@@ -115,7 +147,7 @@ function expectedCells(puuid: string): Record<string, Cell> {
   }
   const t = sql(
     `SELECT COUNT(*) games, COUNT(c.score) scored, AVG(c.score) score FROM match_participants p JOIN matches m USING (platform_id, game_id)
-       LEFT JOIN mat_contribution c ON c.participant_rowid = p.rowid WHERE p.puuid = ? AND m.queue_id = 2400`,
+       LEFT JOIN mat_contribution c ON c.participant_rowid = p.rowid WHERE p.puuid = ? AND m.queue_id = 2400 AND m.is_remake = 0`,
     [puuid],
   )[0]
   out["整體"] = {
@@ -146,7 +178,7 @@ test.describe("好友比較頁：全員一覽", () => {
   test("最上面一列「全體參賽者」是參照：場次對 SQL，雷達八種出裝的場次對 SQL，不是按鈕", async ({ page }) => {
     const ref = page.getByTestId("crew-reference-row")
     await expect(ref).toContainText("參照")
-    const total = Number(sql(`SELECT COUNT(*) n FROM match_participants p JOIN matches m USING (platform_id, game_id) WHERE m.queue_id = 2400`)[0].n)
+    const total = Number(sql(`SELECT COUNT(*) n FROM match_participants p JOIN matches m USING (platform_id, game_id) WHERE m.queue_id = 2400 AND m.is_remake = 0`)[0].n)
     await expect(ref).toContainText(`${total} 場`)
     const tip = (await ref.locator("svg title").textContent())!
     const lines = [...tip.matchAll(/^(\S+(?: \S+)?) \d+%（(\d+) 場/gm)].map((m) => ({ label: m[1], games: Number(m[2]) }))
@@ -154,7 +186,7 @@ test.describe("好友比較頁：全員一覽", () => {
     for (const l of lines) {
       const n = sql(
         `SELECT COUNT(*) n FROM match_participants p JOIN matches m USING (platform_id, game_id)
-           JOIN mat_builds b ON b.participant_rowid = p.rowid WHERE m.queue_id = 2400 AND b.build_role = ?`,
+           JOIN mat_builds b ON b.participant_rowid = p.rowid WHERE m.queue_id = 2400 AND m.is_remake = 0 AND b.build_role = ?`,
         [l.label],
       )[0].n
       expect(l.games, l.label).toBe(Number(n))
@@ -231,7 +263,7 @@ test.describe("好友比較頁：全員一覽", () => {
       const m = await memberOf(row)
       const champs = sql(
         `SELECT p.champion_id, COUNT(c.score) scored, AVG(c.score) score FROM match_participants p JOIN matches mm USING (platform_id, game_id)
-           LEFT JOIN mat_contribution c ON c.participant_rowid = p.rowid WHERE p.puuid = ? AND mm.queue_id = 2400 GROUP BY p.champion_id`,
+           LEFT JOIN mat_contribution c ON c.participant_rowid = p.rowid WHERE p.puuid = ? AND mm.queue_id = 2400 AND mm.is_remake = 0 GROUP BY p.champion_id`,
         [m.puuid],
       ).filter((r) => r.score !== null)
       const z = zFor(champs.filter((r) => Number(r.scored) >= 5).length)
@@ -321,7 +353,7 @@ test.describe("好友比較頁：抽屜（兩個分頁）", () => {
     const m = await memberOf(row)
     const champs = sql(
       `SELECT p.champion_id, COUNT(c.score) scored, AVG(c.score) score FROM match_participants p JOIN matches mm USING (platform_id, game_id)
-         LEFT JOIN mat_contribution c ON c.participant_rowid = p.rowid WHERE p.puuid = ? AND mm.queue_id = 2400 GROUP BY p.champion_id`,
+         LEFT JOIN mat_contribution c ON c.participant_rowid = p.rowid WHERE p.puuid = ? AND mm.queue_id = 2400 AND mm.is_remake = 0 GROUP BY p.champion_id`,
       [m.puuid],
     ).filter((r) => r.score !== null)
     const z = zFor(champs.filter((r) => Number(r.scored) >= 5).length)
@@ -398,6 +430,7 @@ test("好友比較頁不再有「陣容情境」：陣容分析集中在陣容�
 test.describe("好友比較頁：查英雄／查增幅裝置", () => {
   test.beforeEach(async ({ page }) => {
     await openPage(page, "crew")
+    await page.getByRole("tab", { name: "查英雄", exact: true }).click()
     await expect(panel(page, "查英雄")).toBeVisible()
   })
 
@@ -408,7 +441,7 @@ test.describe("好友比較頁：查英雄／查增幅裝置", () => {
     const crew = crewMembers().map((m) => m.puuid)
     const r = sql(
       `SELECT COUNT(DISTINCT p.puuid) players, COUNT(*) games, SUM(p.win) wins FROM match_participants p JOIN matches m USING (platform_id, game_id)
-         JOIN dim_champions c ON c.id = p.champion_id WHERE m.queue_id = 2400 AND c.name = ? AND p.puuid IN (${crew.map(() => "?").join(",")})`,
+         JOIN dim_champions c ON c.id = p.champion_id WHERE m.queue_id = 2400 AND m.is_remake = 0 AND c.name = ? AND p.puuid IN (${crew.map(() => "?").join(",")})`,
       [champ, ...crew],
     )[0]
     await expect(box.getByText(`${r.players} 人玩過・合計 ${r.games} 場・${r.wins} 勝 ${Number(r.games) - Number(r.wins)} 敗`)).toBeVisible()
@@ -433,20 +466,22 @@ test.describe("好友比較頁：查英雄／查增幅裝置", () => {
     await expect(page.getByText("這群人都沒玩過這隻。")).toBeVisible()
   })
 
-  test("每位好友一列：場次、勝率差、貢獻；沒玩過的標示「沒玩過」；點有玩過的展開他的每一場", async ({ page }) => {
+  test("每位好友一列：場次、勝率差、貢獻；沒玩過的標示「沒玩過」；點有玩過的開抽屜看他的每一場", async ({ page }) => {
     const box = panel(page, "查英雄")
-    const rows = box.locator("button.slide-in")
+    const rows = box.getByTestId("lookup-row")
     await expect(rows.first()).toBeVisible()
     const first = rows.first()
     const n = Number((await first.innerText()).match(/(\d+) 場/)![1])
     await first.click()
-    await expect(first).toHaveAttribute("aria-expanded", "true")
-    await expect(box.getByText(`共 ${n} 場`)).toBeVisible()
-    await first.click()
-    await expect(first).toHaveAttribute("aria-expanded", "false")
+    const drawer = page.getByRole("dialog")
+    await expect(drawer.getByRole("heading")).toContainText("的每一場")
+    await expect(drawer.getByText(`共 ${n} 場`)).toBeVisible()
+    await page.keyboard.press("Escape")
+    await expect(drawer).toBeHidden()
   })
 
   test("查增幅裝置：摘要的人數、場次、勝敗和 SQL 一致", async ({ page }) => {
+    await page.getByRole("tab", { name: "查增幅裝置", exact: true }).click()
     const box = panel(page, "查增幅裝置")
     const aug = (await box.getByRole("button").first().innerText()).trim()
     const crew = crewMembers().map((m) => m.puuid)
@@ -455,7 +490,7 @@ test.describe("好友比較頁：查英雄／查增幅裝置", () => {
          FROM participant_augments pa
          JOIN match_participants p ON p.platform_id = pa.platform_id AND p.game_id = pa.game_id AND p.participant_id = pa.participant_id
          JOIN matches m ON m.platform_id = p.platform_id AND m.game_id = p.game_id JOIN dim_augments a ON a.id = pa.augment_id
-        WHERE m.queue_id = 2400 AND a.name = ? AND p.puuid IN (${crew.map(() => "?").join(",")})`,
+        WHERE m.queue_id = 2400 AND m.is_remake = 0 AND a.name = ? AND p.puuid IN (${crew.map(() => "?").join(",")})`,
       [aug, ...crew],
     )[0]
     await expect(box.getByText(`${r.players} 人拿過・合計 ${r.games} 場・${r.wins} 勝 ${Number(r.games) - Number(r.wins)} 敗`)).toBeVisible()
@@ -471,7 +506,7 @@ test("好友比較頁：模式與期間篩選照常套用", async ({ page }) => 
   const me = crewMembers().find((m) => m.is_me)!
   const r = sql(
     `SELECT COUNT(*) games FROM match_participants p JOIN matches m USING (platform_id, game_id)
-      WHERE p.puuid = ? AND m.queue_id = 2400 AND m.local_date >= date('now','localtime','-6 days')`,
+      WHERE p.puuid = ? AND m.queue_id = 2400 AND m.is_remake = 0 AND m.local_date >= date('now','localtime','-6 days')`,
     [me.puuid],
   )[0]
   const myRow = panel(page, "全員一覽").getByTestId("crew-row").filter({ hasText: nameOf(me.riot_id) }).first()
@@ -484,13 +519,17 @@ test("好友比較頁：不再出現固定門檻的「適合／不適合」標�
   await expect(panel(page, "全員一覽").getByTestId("crew-row").getByText(/適合/)).toHaveCount(0)
 })
 
-/** 數據總表 → 單場巔峰 → 前 10 場：回傳那個面板 */
+/** 數據總表 → 單場前 10 場：回傳那個面板 */
 const peakTop = async (page: Page) => {
+  await page.getByRole("tab", { name: "數據總表", exact: true }).click()
   const p = panel(page, "數據總表")
-  await p.getByRole("button", { name: "單場巔峰", exact: true }).click()
-  await p.getByRole("button", { name: "前 10 場", exact: true }).click()
+  await p.getByRole("button", { name: "單場前 10 場", exact: true }).click()
   return p
 }
+
+/** 比較對象裡一個人的標籤（名字在前）右邊的 ★：設為中心的那一顆 */
+const centerBtn = (page: Page, riotId: string) =>
+  panel(page, "比較對象").getByTestId("crew-chip").filter({ hasText: nameOf(riotId) }).first().getByTestId("crew-center")
 
 /** 比較對象（站長＋追蹤中的帳號）的每一場，某個每分鐘數值由高到低前 10 場；有給中心就只算他也在場的對局。獨立手寫，不經過語意層。 */
 const minuteTop = (numerator: string, centers: string[] = []) =>
@@ -526,13 +565,13 @@ test.describe("好友比較頁：單場每分鐘紀錄", () => {
     expect(await p.getByTestId("minute-record-value").allInnerTexts()).toEqual(want)
   })
 
-  test("列出這幾場的戰報：按鈕切換成「收起戰報」，再點收起", async ({ page }) => {
+  test("列出這幾場的戰報：開抽屜列出前 10 場，Esc 關閉", async ({ page }) => {
     const p = await peakTop(page)
-    const open = p.getByRole("button", { name: "列出這幾場的戰報" })
-    await open.click()
-    await expect(p.getByRole("button", { name: "收起戰報" })).toBeVisible()
-    await p.getByRole("button", { name: "收起戰報" }).click()
-    await expect(open).toBeVisible()
+    await p.getByRole("button", { name: "列出這幾場的戰報", exact: true }).click()
+    const drawer = page.getByRole("dialog")
+    await expect(drawer.getByRole("heading")).toContainText("前 10 場的戰報")
+    await page.keyboard.press("Escape")
+    await expect(drawer).toBeHidden()
   })
 })
 
@@ -545,35 +584,32 @@ test.describe("好友比較頁：單場每分鐘紀錄的中心（選填）", ()
     const p = await peakTop(page)
     const picker = panel(page, "比較對象")
     const me = crewMembers().find((m) => m.is_me === 1)!
-    const meName = nameOf(me.riot_id)
     const values = () => p.getByTestId("minute-record-value").allInnerTexts()
 
-    await picker.getByRole("button", { name: meName, exact: true }).click()
+    await centerBtn(page, me.riot_id).click()
     const withCenter = minuteTop("p.kills", [me.puuid]).map((v) => v.toFixed(2))
     await expect(p.getByTestId("minute-record-game")).toHaveCount(withCenter.length)
     expect(await values()).toEqual(withCenter)
 
-    await picker.getByRole("button", { name: "不設", exact: true }).click()
+    await picker.getByRole("button", { name: "不設中心", exact: true }).click()
     const noCenter = minuteTop("p.kills").map((v) => v.toFixed(2))
     await expect.poll(values).toEqual(noCenter)
   })
 })
 
-test.describe("好友比較頁：單場每分鐘紀錄點一列看那一場", () => {
+test.describe("好友比較頁：單場前 10 場點一列看那一場", () => {
   test.beforeEach(async ({ page }) => {
     await openPage(page, "crew")
   })
 
-  test("點第一列：下面列出那一場（只顯示這一場），再點一次收起", async ({ page }) => {
+  test("點第一列：開抽屜列出那一場（只顯示這一場），Esc 關閉", async ({ page }) => {
     const p = await peakTop(page)
-    const first = p.getByTestId("minute-record-game").first()
-    await first.locator("button").click()
-    const drill = p.getByTestId("minute-record-drill")
-    await expect(drill).toBeVisible()
-    await expect(drill).toContainText("只顯示這一場")
-    await expect(drill).toContainText("第 1 名")
-    await first.locator("button").click()
-    await expect(p.getByTestId("minute-record-drill")).toHaveCount(0)
+    await p.getByTestId("minute-record-game").first().locator("button").click()
+    const drawer = page.getByRole("dialog")
+    await expect(drawer.getByRole("heading")).toContainText("第 1 名")
+    await expect(drawer).toContainText("只顯示這一場")
+    await page.keyboard.press("Escape")
+    await expect(drawer).toBeHidden()
   })
 })
 
@@ -584,11 +620,10 @@ test.describe("好友比較頁：中心可多選（只看這幾位都在場的�
 
   test("選兩位：單場每分鐘紀錄只算他們兩位都在場的場次，數值和獨立 SQL 一致", async ({ page }) => {
     const p = await peakTop(page)
-    const picker = panel(page, "比較對象")
     const me = crewMembers().find((m) => m.is_me === 1)!
     const other = crewMembers().find((m) => m.is_me !== 1)!
-    await picker.getByRole("button", { name: nameOf(me.riot_id), exact: true }).click()
-    await picker.getByRole("button", { name: nameOf(other.riot_id), exact: true }).click()
+    await centerBtn(page, me.riot_id).click()
+    await centerBtn(page, other.riot_id).click()
     const want = minuteTop("p.kills", [me.puuid, other.puuid]).map((v) => v.toFixed(2))
     await expect(p.getByTestId("minute-record-game")).toHaveCount(want.length)
     expect(await p.getByTestId("minute-record-value").allInnerTexts()).toEqual(want)
