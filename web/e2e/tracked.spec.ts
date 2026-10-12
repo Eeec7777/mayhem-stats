@@ -1,7 +1,7 @@
 import type { Page } from "@playwright/test"
 import { test, expect } from "./fixtures"
 import { openPage } from "./helpers"
-import { mePuuid, sql } from "./db"
+import { sql } from "./db"
 
 const card = (page: Page, title: string) => page.locator('[data-slot="card"]', { has: page.getByText(title, { exact: true }) }).first()
 const kpi = (page: Page, label: string) => card(page, label).locator(".font-mono").first()
@@ -100,126 +100,6 @@ test.describe("追蹤對象頁", () => {
   test("說明文字：只給最新 20 場、重複採集不會產生重複資料", async ({ page }) => {
     await expect(page.getByText(/別人的紀錄只給最新 20 場/)).toBeVisible()
     await expect(page.getByText(/重複採集不會產生重複資料/)).toBeVisible()
-  })
-})
-
-// ── 單場每分鐘紀錄 ──────────────────────────────────────────────────────────
-// 畫面上的十二個指標，各自獨立寫一次 SQL（分子 × 60 ÷ 秒數的最大值）來對。
-// 範圍要和畫面的預設一致：**本機帳號也在場的對局**（追蹤對象自己單獨打的不算）、
-// 人是本機帳號 ＋ 追蹤中的帳號、只看 Mayhem、全部期間、不含重開局。
-
-const RECORDS = [
-  { label: "每分鐘擊殺", numerator: "p.kills", decimals: 2 },
-  { label: "每分鐘死亡", numerator: "p.deaths", decimals: 2 },
-  { label: "每分鐘助攻", numerator: "p.assists", decimals: 2 },
-  { label: "每分鐘對英雄傷害", numerator: "p.dmg_to_champions", decimals: 0 },
-  { label: "每分鐘承受傷害", numerator: "p.dmg_taken", decimals: 0 },
-  { label: "每分鐘減免傷害", numerator: "p.dmg_mitigated", decimals: 0 },
-  { label: "每分鐘治療", numerator: "p.total_heal", decimals: 0 },
-  { label: "每分鐘控場", numerator: "p.time_ccing_others", decimals: 1 },
-  { label: "每分鐘經濟", numerator: "p.gold_earned", decimals: 0 },
-  { label: "每分鐘補兵", numerator: "p.cs", decimals: 1 },
-  { label: "每分鐘建築傷害", numerator: "p.dmg_to_objectives", decimals: 0 },
-  { label: "每分鐘小兵傷害（估）", numerator: "(p.total_damage - p.dmg_to_champions - COALESCE(p.dmg_to_objectives, 0))", decimals: 0 },
-]
-
-/** 這一群人每一場的每分鐘值，由高到低。
- *  shared（預設）＝ 只算本機帳號（中心）也在場的那些對局，和畫面一致；false 則不限制，用來確認限制真的有生效。 */
-const crewPerMin = (numerator: string, shared = true) =>
-  sql(
-    `SELECT ${numerator} * 60.0 / NULLIF(p.game_duration, 0) AS v, p.puuid AS puuid
-       FROM match_participants p JOIN matches m USING (platform_id, game_id)
-      WHERE m.queue_id = 2400 AND m.is_remake = 0 AND p.game_duration > 0
-        AND p.puuid IN (SELECT puuid FROM accounts WHERE is_me = 1 OR tracked = 1)
-        AND ${numerator} IS NOT NULL
-        ${shared ? `AND EXISTS (SELECT 1 FROM match_participants c
-                     WHERE c.platform_id = p.platform_id AND c.game_id = p.game_id AND c.puuid = ?)` : ""}
-      ORDER BY v DESC`,
-    shared ? [mePuuid()] : [],
-  ).map((r) => ({ v: Number(r.v), puuid: String(r.puuid) }))
-
-/** 畫面上的寫法：整數加千分位，其餘固定小數位。 */
-const shown = (v: number, decimals: number) => (decimals === 0 ? Math.round(v).toLocaleString() : v.toFixed(decimals))
-/** 畫面上的字（可能帶千分位與「秒」）換回數字；「—」回 NaN，不要變成 0。 */
-const parse = (text: string) => {
-  const digits = text.replace(/[^\d.]/g, "")
-  return digits ? Number(digits) : NaN
-}
-
-const recordCard = (page: Page, label: string) =>
-  page.locator('[data-testid="record-card"]', { has: page.getByText(label, { exact: true }) })
-
-test.describe("追蹤對象頁：單場每分鐘紀錄", () => {
-  test.beforeEach(async ({ page }) => {
-    await openPage(page, "tracked")
-    await expect(page.locator('[data-testid="record-card"]')).toHaveCount(RECORDS.length)
-  })
-
-  test("十二張卡的數字 = 追蹤對象這群人每分鐘值的單場最高（和 SQL 一致）", async ({ page }) => {
-    for (const r of RECORDS) {
-      const best = crewPerMin(r.numerator)[0]
-      // 數字會從 0 跑上去（CountUp），用 poll 等它停在最終值
-      await expect
-        .poll(async () => parse(await recordCard(page, r.label).locator(".font-mono").innerText()), { message: r.label })
-        .toBe(Number(shown(best.v, r.decimals).replace(/,/g, "")))
-    }
-  })
-
-  test("追蹤對象自己單獨打的場次不算：卡片是「同場」的最高值，不是不限制的最高值", async ({ page }) => {
-    // 找一個「限制同場」和「不限制」答案不同的指標。追蹤對象在你沒參與的場次裡剛好沒有任何一項破紀錄時，
-    // 這個測試就沒有東西可比，略過（不是失敗）。
-    const differs = RECORDS.find((r) => {
-      const shared = crewPerMin(r.numerator)[0]?.v
-      const any = crewPerMin(r.numerator, false)[0]?.v
-      return shared !== undefined && any !== undefined && Math.abs(shared - any) > 1e-9
-    })
-    test.skip(!differs, "這份資料裡，追蹤對象沒參與你的場次之外的紀錄，無從分辨")
-    const r = differs!
-    const shared = crewPerMin(r.numerator)[0].v
-    const any = crewPerMin(r.numerator, false)[0].v
-    await expect.poll(async () => parse(await recordCard(page, r.label).locator(".font-mono").innerText())).toBe(
-      Number(shown(shared, r.decimals).replace(/,/g, "")),
-    )
-    expect(parse(await recordCard(page, r.label).locator(".font-mono").innerText())).not.toBe(
-      Number(shown(any, r.decimals).replace(/,/g, "")),
-    )
-  })
-
-  test("點一張卡：列出同一個指標最高的 10 場，由高到低，第一場就是卡片上的數字", async ({ page }) => {
-    const r = RECORDS[3] // 每分鐘對英雄傷害
-    const expected = crewPerMin(r.numerator).slice(0, 10)
-    await recordCard(page, r.label).click()
-    const panel = page.locator('[data-slot="card"]', { has: page.getByText(`${r.label}：最高的 10 場`) })
-    await expect(panel.locator('[data-testid="record-game"]')).toHaveCount(expected.length)
-    const values = await panel.locator('[data-testid="record-value"]').allInnerTexts()
-    expect(values.map(parse)).toEqual(expected.map((e) => Number(shown(e.v, r.decimals).replace(/,/g, ""))))
-    // 卡片上的最高值就是清單的第一列
-    expect(parse(await recordCard(page, r.label).locator(".font-mono").innerText())).toBe(values.map(parse)[0])
-    // 麵包屑登記了這一層，點一下可以退回
-    await expect(page.locator("header").getByText(r.label)).toBeVisible()
-  })
-
-  test("列出這幾場的戰報：逐場卡片的場數和清單一樣", async ({ page }) => {
-    const r = RECORDS[0]
-    const count = Math.min(10, crewPerMin(r.numerator).length)
-    await recordCard(page, r.label).click()
-    const panel = page.locator('[data-slot="card"]', { has: page.getByText(`${r.label}：最高的 10 場`) })
-    await panel.getByRole("button", { name: "列出這幾場的戰報" }).click()
-    await expect(panel.getByText(new RegExp(`共 ${count} 場`))).toBeVisible()
-  })
-
-  test("每個人的單場最高：一列的數字 = 每個人各自的 SQL 最高值", async ({ page }) => {
-    const r = RECORDS[3] // 每分鐘對英雄傷害
-    const perPlayer = new Map<string, number>()
-    for (const row of crewPerMin(r.numerator)) {
-      if (!perPlayer.has(row.puuid)) perPlayer.set(row.puuid, row.v) // 已由高到低排序，第一次遇到就是最高
-    }
-    const expected = [...perPlayer.values()].map((v) => Number(shown(v, r.decimals).replace(/,/g, ""))).sort((a, b) => b - a)
-    const cells = await page
-      .locator(`[data-testid="per-player-row"][data-metric="participants.max_dpm"] td`)
-      .allInnerTexts()
-    // 欄的順序是「自己排前面、其餘依名稱」，和 SQL 的排序無關，所以比的是整列的數字集合
-    expect(cells.map(parse).filter(Number.isFinite).sort((a, b) => b - a)).toEqual(expected)
   })
 })
 

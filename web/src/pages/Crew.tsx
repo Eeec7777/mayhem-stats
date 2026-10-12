@@ -34,6 +34,7 @@ import {
   type ScoreGap,
   type Strength,
 } from "@/lib/gap"
+import { participantRows } from "@/lib/who"
 import { BUILD_ROLES, BUILD_SHORT, NO_LIMIT, round0, splitRiotId } from "./shared"
 
 // ── 判斷：和陣容、敗因、節奏三頁同一套「區間」講法 ─────────────────────────────
@@ -1685,6 +1686,16 @@ const STAT_SETS: { id: string; label: string; caption: string; cols: StatCol[] }
       { key: "participants.max_turret_kills", label: "單場最高防禦塔擊殺", fmt: int, hint: "範圍內單場親手摧毀的最高防禦塔數", record: true },
       { key: "participants.max_penta_kills", label: "單場最高五殺次數", fmt: int, hint: "範圍內單場最高五殺次數", record: true },
       { key: "participants.max_crit", label: "單場最高單次暴擊傷害", fmt: int, hint: "範圍內單場最高單次暴擊傷害", record: true },
+      // 每分鐘版本：和上面的總量不同單位，短局不會因為打得久而佔便宜（算式同每分鐘平均，見 participants.yml）
+      { key: "participants.best_kills_per_min", label: "單場最高每分鐘擊殺", fmt: (v) => v.toFixed(2), hint: "範圍內每分鐘擊殺最高的那一場", record: true },
+      { key: "participants.best_assists_per_min", label: "單場最高每分鐘助攻", fmt: (v) => v.toFixed(2), hint: "範圍內每分鐘助攻最高的那一場", record: true },
+      { key: "participants.best_taken_per_min", label: "單場最高每分鐘承受傷害", fmt: int, hint: "範圍內每分鐘承受傷害最高的那一場", record: true },
+      { key: "participants.best_mitigated_per_min", label: "單場最高每分鐘減免傷害", fmt: int, hint: "範圍內每分鐘減免傷害最高的那一場", record: true },
+      { key: "participants.best_heal_per_min", label: "單場最高每分鐘治療", fmt: int, hint: "範圍內每分鐘治療量（含自補）最高的那一場", record: true },
+      { key: "participants.best_cc_time_per_min", label: "單場最高每分鐘控場", fmt: (v) => `${v.toFixed(1)} 秒`, hint: "範圍內每分鐘控場時間最高的那一場", record: true },
+      { key: "participants.best_cs_per_min", label: "單場最高每分鐘補兵", fmt: (v) => v.toFixed(1), hint: "範圍內每分鐘補兵最高的那一場", record: true },
+      { key: "participants.best_objective_damage_per_min", label: "單場最高每分鐘建築傷害", fmt: int, hint: "範圍內每分鐘對建築傷害最高的那一場", record: true },
+      { key: "participants.best_minion_damage_per_min", label: "單場最高每分鐘小兵傷害（估）", fmt: int, hint: "範圍內每分鐘小兵傷害（估）最高的那一場", record: true },
     ],
   },
   {
@@ -1864,6 +1875,148 @@ function StatsPanel({
             </div>
           )}
         </div>
+      )}
+    </Panel>
+  )
+}
+
+// ── 單場每分鐘紀錄：比較對象的每一場裡，每分鐘數值最高的那幾場 ─────────────────
+// 和數據總表「單場巔峰」是同一批指標；差別是這裡看得到「是哪幾場」。一次一個指標，列出最高的前 TOP_N 場。
+// 範圍是目前比較的這群人、各自的每一場一起比（好友比較沒有中心，不限定「和誰同場」）。
+const TOP_N = 10
+
+type MinuteRecord = { key: string; label: string; fmt: (v: number) => string; tone: "good" | "bad" | "plain"; hint: string }
+const MINUTE_RECORDS: MinuteRecord[] = [
+  { key: "participants.best_kills_per_min", label: "每分鐘擊殺", fmt: (v) => v.toFixed(2), tone: "good", hint: "擊殺 ÷ 對局分鐘數" },
+  { key: "participants.max_deaths_per_min", label: "每分鐘死亡", fmt: (v) => v.toFixed(2), tone: "bad", hint: "死亡 ÷ 對局分鐘數，死最快的一場" },
+  { key: "participants.best_assists_per_min", label: "每分鐘助攻", fmt: (v) => v.toFixed(2), tone: "good", hint: "助攻 ÷ 對局分鐘數" },
+  { key: "participants.max_dpm", label: "每分鐘對英雄傷害", fmt: int, tone: "good", hint: "對敵方英雄的傷害 ÷ 對局分鐘數" },
+  { key: "participants.best_taken_per_min", label: "每分鐘承受傷害", fmt: int, tone: "plain", hint: "承受的總傷害 ÷ 對局分鐘數" },
+  { key: "participants.best_mitigated_per_min", label: "每分鐘減免傷害", fmt: int, tone: "plain", hint: "護甲、魔抗、護盾擋下的傷害 ÷ 對局分鐘數" },
+  { key: "participants.best_heal_per_min", label: "每分鐘治療", fmt: int, tone: "plain", hint: "治療總量（含治療自己）÷ 對局分鐘數" },
+  { key: "participants.best_cc_time_per_min", label: "每分鐘控場", fmt: (v) => `${v.toFixed(1)} 秒`, tone: "good", hint: "控住敵人的秒數 ÷ 對局分鐘數" },
+  { key: "participants.max_gpm", label: "每分鐘經濟", fmt: int, tone: "good", hint: "獲得的金錢 ÷ 對局分鐘數" },
+  { key: "participants.best_cs_per_min", label: "每分鐘補兵", fmt: (v) => v.toFixed(1), tone: "good", hint: "補到的兵 ÷ 對局分鐘數" },
+  { key: "participants.best_objective_damage_per_min", label: "每分鐘建築傷害", fmt: int, tone: "good", hint: "對防禦塔與兵營的傷害 ÷ 對局分鐘數" },
+  { key: "participants.best_minion_damage_per_min", label: "每分鐘小兵傷害（估）", fmt: int, tone: "plain", hint: "總輸出 − 對英雄 − 對建築，再 ÷ 對局分鐘數" },
+]
+
+/** 對局長度（分鐘，含小數）寫成 mm:ss。先換成整秒再拆，避免 14.999 分變成 14:60 */
+const asClock = (minutes: number) => {
+  const total = Math.round(minutes * 60)
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`
+}
+
+function MinuteRecords({ scoped }: { scoped: (query: CubeQuery) => CubeQuery | null }) {
+  const { matchParams } = useFilters()
+  const [key, setKey] = useState(MINUTE_RECORDS[0].key)
+  // 展開了戰報的那一次（換指標就收起來）
+  const [cardsOpen, setCardsOpen] = useState(false)
+  const metric = MINUTE_RECORDS.find((m) => m.key === key) ?? MINUTE_RECORDS[0]
+  const top = useCube(
+    scoped({
+      measures: [metric.key],
+      dimensions: [
+        "participants.participant_key",
+        "participants.riot_id",
+        "champions.name",
+        "champions.icon_path",
+        "matches.local_date",
+        "matches.duration_minutes",
+      ],
+      order: { [metric.key]: "desc" },
+      limit: TOP_N,
+    }),
+  )
+  const drill = top.rows.length ? participantRows(top.rows) : null
+
+  return (
+    <Panel
+      title="單場每分鐘紀錄"
+      caption={`比較對象的每一場裡，這個指標最高的前 ${TOP_N} 場。數據總表「單場巔峰」看的是每人一格，這裡看的是哪幾場。跟著上方的模式與期間篩選。`}
+      action={
+        drill && (
+          <Button size="sm" variant={cardsOpen ? "secondary" : "outline"} onClick={() => setCardsOpen((v) => !v)}>
+            {cardsOpen ? "收起戰報" : "列出這幾場的戰報"}
+          </Button>
+        )
+      }
+    >
+      <ToggleGroup
+        type="single"
+        size="sm"
+        variant="outline"
+        value={metric.key}
+        onValueChange={(v) => {
+          if (!v) return
+          setKey(v)
+          setCardsOpen(false)
+        }}
+        className="mb-3 flex-wrap justify-start"
+      >
+        {MINUTE_RECORDS.map((m) => (
+          <ToggleGroupItem key={m.key} value={m.key} title={m.hint}>
+            {m.label}
+          </ToggleGroupItem>
+        ))}
+      </ToggleGroup>
+
+      {top.error ? (
+        <QueryError error={top.error} />
+      ) : top.loading ? (
+        <Skeleton className="h-[360px] w-full" />
+      ) : !top.rows.length ? (
+        <EmptyState>這個條件下沒有對局。</EmptyState>
+      ) : (
+        <>
+          <ol className="divide-y divide-border/50">
+            {top.rows.map((r, i) => {
+              const value = num(r[metric.key])
+              const minutes = num(r["matches.duration_minutes"])
+              const { name, tag } = splitRiotId(r["participants.riot_id"] as string | null, "—")
+              return (
+                <li
+                  key={String(r["participants.participant_key"])}
+                  data-testid="minute-record-game"
+                  className="slide-in flex items-center gap-3 py-2"
+                  style={{ "--stagger": `${Math.min(i * 30, 400)}ms` } as CSSProperties}
+                >
+                  <span className="w-5 shrink-0 text-right font-mono text-xs font-bold tabular-nums text-muted-foreground">{i + 1}</span>
+                  <img
+                    src={iconUrl(r["champions.icon_path"] as string | null)}
+                    alt={String(r["champions.name"] ?? "")}
+                    className="size-8 shrink-0 rounded-md bg-icon-tile"
+                  />
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    <span className="flex min-w-0 items-baseline gap-1">
+                      <span className="truncate text-sm font-medium">{name}</span>
+                      {tag && <span className="shrink-0 text-[11px] text-muted-foreground">{tag}</span>}
+                    </span>
+                    <span className="truncate text-[11px] text-muted-foreground">
+                      {String(r["champions.name"] ?? "—")} · {String(r["matches.local_date"] ?? "—")}
+                      {minutes !== null && ` · ${asClock(minutes)}`}
+                    </span>
+                  </span>
+                  <span
+                    data-testid="minute-record-value"
+                    className={cn(
+                      "shrink-0 font-mono text-sm font-semibold tabular-nums",
+                      metric.tone === "bad" ? "text-loss" : "text-foreground",
+                    )}
+                  >
+                    {value === null ? "—" : metric.fmt(value)}
+                  </span>
+                </li>
+              )
+            })}
+          </ol>
+          {cardsOpen && drill && (
+            <div className="reveal mt-3 border-t pt-3">
+              {/* 逐場卡片一律走 /api/matches；是哪幾場由上面那個 Cube 查詢決定（participants=遊戲:參賽者） */}
+              <MatchList params={{ ...matchParams(), ...drill.params }} showPlayer />
+            </div>
+          )}
+        </>
       )}
     </Panel>
   )
@@ -2140,6 +2293,8 @@ export function Crew() {
       </Panel>
 
       <StatsPanel people={ordered} rows={stats.rows} loading={loading || stats.loading} profiles={profiles} />
+
+      <MinuteRecords scoped={q} />
 
       {/* ── 查英雄、查增幅裝置：選一個，看每個人用它的勝率與貢獻 ── */}
       {/* 兩個面板一樣的結構，寬螢幕（1900px 以上，展開的對局卡片才放得進半版）左右並排，其餘上下疊 */}
