@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { EmptyState, Panel, QueryError } from "@/components/primitives"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ContribRadarChart, SHRINK_K, shrunk } from "@/components/charts"
 import { DetailDrawer, useDrawerSettled } from "@/components/DetailDrawer"
 import { ForestAxis, ForestTrack } from "@/components/GapForest"
@@ -1728,13 +1729,19 @@ function StatsPanel({
   rows,
   loading,
   profiles,
+  scoped,
+  center,
 }: {
   people: Player[]
   rows: CubeRow[]
   loading: boolean
   profiles: Map<string, Profile>
+  scoped: (query: CubeQuery) => CubeQuery | null
+  center: Player | null
 }) {
   const [setId, setSetId] = useState<string>("overview")
+  // 單場巔峰組的兩種看法：每人一格（表）／前 10 場（每場一列）
+  const [peakView, setPeakView] = useState<"table" | "top">("table")
   // 點一格：下面列出算進這格的每一場（出裝比例那組只列那種出裝／那種傷害類型的場次）
   const [drill, setDrill] = useState<{ puuid: string; key: string; label: string; record?: boolean } | null>(null)
   const [sortKey, setSortKey] = useState<string>("participants.avg_damage")
@@ -1780,9 +1787,19 @@ function StatsPanel({
             ))}
             <ToggleGroupItem value="mix">出裝比例</ToggleGroupItem>
           </ToggleGroup>
+          {setId === "peak" && (
+            <ToggleGroup type="single" size="sm" variant="outline" value={peakView} onValueChange={(v) => v && setPeakView(v as "table" | "top")} className="flex-wrap">
+              <ToggleGroupItem value="table">每人一格</ToggleGroupItem>
+              <ToggleGroupItem value="top">前 10 場</ToggleGroupItem>
+            </ToggleGroup>
+          )}
           <p className="text-[11px] text-muted-foreground">
             {isMix ? "六種出裝各占他場次的幾成。不是好壞，是拿來對照其他數字的；點數字看那種出裝的每一場" : set?.caption}
           </p>
+          {setId === "peak" && peakView === "top" ? (
+            <PeakTop scoped={scoped} cols={cols} center={center} />
+          ) : (
+          <>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[860px] text-sm" data-testid="crew-stats">
               <thead>
@@ -1880,32 +1897,17 @@ function StatsPanel({
               />
             </div>
           )}
+          </>
+          )}
         </div>
       )}
     </Panel>
   )
 }
 
-// ── 單場每分鐘紀錄：比較對象的每一場裡，每分鐘數值最高的那幾場 ─────────────────
-// 和數據總表「單場巔峰」是同一批指標；差別是這裡看得到「是哪幾場」。一次一個指標，列出最高的前 TOP_N 場。
-// 範圍是目前比較的這群人、各自的每一場一起比（好友比較沒有中心，不限定「和誰同場」）。
+// ── 單場紀錄的前 10 場：數據總表「單場巔峰」的第二種看法（每人一格 ↔ 每場一列）────────
+// 指標就是那組的欄位（每分鐘與總量都有），一次一個。範圍與中心跟著整頁；點一列看那一場，和點數字看那一場一樣。
 const TOP_N = 10
-
-type MinuteRecord = { key: string; label: string; fmt: (v: number) => string; tone: "good" | "bad" | "plain"; hint: string }
-const MINUTE_RECORDS: MinuteRecord[] = [
-  { key: "participants.best_kills_per_min", label: "每分鐘擊殺", fmt: (v) => v.toFixed(2), tone: "good", hint: "擊殺 ÷ 對局分鐘數" },
-  { key: "participants.max_deaths_per_min", label: "每分鐘死亡", fmt: (v) => v.toFixed(2), tone: "bad", hint: "死亡 ÷ 對局分鐘數，死最快的一場" },
-  { key: "participants.best_assists_per_min", label: "每分鐘助攻", fmt: (v) => v.toFixed(2), tone: "good", hint: "助攻 ÷ 對局分鐘數" },
-  { key: "participants.max_dpm", label: "每分鐘對英雄傷害", fmt: int, tone: "good", hint: "對敵方英雄的傷害 ÷ 對局分鐘數" },
-  { key: "participants.best_taken_per_min", label: "每分鐘承受傷害", fmt: int, tone: "plain", hint: "承受的總傷害 ÷ 對局分鐘數" },
-  { key: "participants.best_mitigated_per_min", label: "每分鐘減免傷害", fmt: int, tone: "plain", hint: "護甲、魔抗、護盾擋下的傷害 ÷ 對局分鐘數" },
-  { key: "participants.best_heal_per_min", label: "每分鐘治療", fmt: int, tone: "plain", hint: "治療總量（含治療自己）÷ 對局分鐘數" },
-  { key: "participants.best_cc_time_per_min", label: "每分鐘控場", fmt: (v) => `${v.toFixed(1)} 秒`, tone: "good", hint: "控住敵人的秒數 ÷ 對局分鐘數" },
-  { key: "participants.max_gpm", label: "每分鐘經濟", fmt: int, tone: "good", hint: "獲得的金錢 ÷ 對局分鐘數" },
-  { key: "participants.best_cs_per_min", label: "每分鐘補兵", fmt: (v) => v.toFixed(1), tone: "good", hint: "補到的兵 ÷ 對局分鐘數" },
-  { key: "participants.best_objective_damage_per_min", label: "每分鐘建築傷害", fmt: int, tone: "good", hint: "對防禦塔與兵營的傷害 ÷ 對局分鐘數" },
-  { key: "participants.best_minion_damage_per_min", label: "每分鐘小兵傷害（估）", fmt: int, tone: "plain", hint: "總輸出 − 對英雄 − 對建築，再 ÷ 對局分鐘數" },
-]
 
 /** 對局長度（分鐘，含小數）寫成 mm:ss。先換成整秒再拆，避免 14.999 分變成 14:60 */
 const asClock = (minutes: number) => {
@@ -1913,15 +1915,17 @@ const asClock = (minutes: number) => {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`
 }
 
-function MinuteRecords({ scoped, center }: { scoped: (query: CubeQuery) => CubeQuery | null; center: Player | null }) {
+function PeakTop({ scoped, cols, center }: { scoped: (query: CubeQuery) => CubeQuery | null; cols: StatCol[]; center: Player | null }) {
   const { matchParams } = useFilters()
-  const [key, setKey] = useState(MINUTE_RECORDS[0].key)
+  const perMin = cols.filter((c) => c.label.includes("每分鐘"))
+  const totals = cols.filter((c) => !c.label.includes("每分鐘"))
+  // 預設是每分鐘擊殺（數據總表的順序裡每分鐘死亡排在最前，不適合當預設）
+  const [key, setKey] = useState(cols.find((c) => c.key === "participants.best_kills_per_min")?.key ?? perMin[0]?.key ?? cols[0].key)
   // 展開了整批戰報的那一次（換指標或中心就收起來）
   const [cardsOpen, setCardsOpen] = useState(false)
-  // 點了其中一列：只看那一場。記下當時的指標與中心，換了任何一個就自動失效，不用另外清
-  const [pick, setPick] = useState<{ id: string; metric: string; center: string | null } | null>(null)
-  const metric = MINUTE_RECORDS.find((m) => m.key === key) ?? MINUTE_RECORDS[0]
-  const centerId = center?.puuid ?? null
+  // 點了其中一列：記下那一場與當時的指標，換了指標就自動失效
+  const [pick, setPick] = useState<{ id: string; metric: string } | null>(null)
+  const metric = cols.find((c) => c.key === key) ?? cols[0]
   const centerName = center ? splitRiotId(center.riot_id, center.puuid).name : ""
   const top = useCube(
     scoped({
@@ -1939,45 +1943,55 @@ function MinuteRecords({ scoped, center }: { scoped: (query: CubeQuery) => CubeQ
     }),
   )
   const drill = top.rows.length ? participantRows(top.rows) : null
-  const picked = pick && pick.metric === metric.key && pick.center === centerId ? pick : null
+  const picked = pick && pick.metric === metric.key ? pick : null
   const pickedIndex = picked ? top.rows.findIndex((r) => String(r["participants.participant_key"]) === picked.id) : -1
   const pickedRow = pickedIndex >= 0 ? top.rows[pickedIndex] : null
   const pickedDrill = pickedRow ? participantRows([pickedRow]) : null
   const togglePick = (id: string) =>
-    setPick((cur) => (cur && cur.id === id && cur.metric === metric.key && cur.center === centerId ? null : { id, metric: metric.key, center: centerId }))
+    setPick((cur) => (cur && cur.id === id && cur.metric === metric.key ? null : { id, metric: metric.key }))
+  const deathMetric = metric.key.includes("death")
 
   return (
-    <Panel
-      title="單場每分鐘紀錄"
-      caption={`${
-        center ? `只算「${centerName}」也在場的對局：比較對象在這些場裡` : "沒設中心，比較對象的每一場一起比"
-      }，這個指標最高的前 ${TOP_N} 場。點一列看那一場；數據總表「單場巔峰」看的是每人一格。跟著模式與期間篩選。`}
-      action={
-        drill && (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Select
+          value={metric.key}
+          onValueChange={(v) => {
+            setKey(v)
+            setCardsOpen(false)
+          }}
+        >
+          <SelectTrigger className="w-72">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              <SelectLabel>每分鐘</SelectLabel>
+              {perMin.map((c) => (
+                <SelectItem key={c.key} value={c.key}>
+                  {c.label}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+            <SelectGroup>
+              <SelectLabel>總量</SelectLabel>
+              {totals.map((c) => (
+                <SelectItem key={c.key} value={c.key}>
+                  {c.label}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+        {drill && (
           <Button size="sm" variant={cardsOpen ? "secondary" : "outline"} onClick={() => setCardsOpen((v) => !v)}>
             {cardsOpen ? "收起戰報" : "列出這幾場的戰報"}
           </Button>
-        )
-      }
-    >
-      <ToggleGroup
-        type="single"
-        size="sm"
-        variant="outline"
-        value={metric.key}
-        onValueChange={(v) => {
-          if (!v) return
-          setKey(v)
-          setCardsOpen(false)
-        }}
-        className="mb-3 flex-wrap justify-start"
-      >
-        {MINUTE_RECORDS.map((m) => (
-          <ToggleGroupItem key={m.key} value={m.key} title={m.hint}>
-            {m.label}
-          </ToggleGroupItem>
-        ))}
-      </ToggleGroup>
+        )}
+      </div>
+      <p className="text-[11px] text-muted-foreground">
+        {center ? `只算「${centerName}」也在場的對局：比較對象在這些場裡` : "沒設中心，比較對象的每一場一起比"}，「{metric.label.replace("單場最高", "")}」最高的前 {TOP_N} 場。點一列看那一場。
+      </p>
 
       {top.error ? (
         <QueryError error={top.error} />
@@ -1995,12 +2009,7 @@ function MinuteRecords({ scoped, center }: { scoped: (query: CubeQuery) => CubeQ
               const minutes = num(r["matches.duration_minutes"])
               const { name, tag } = splitRiotId(r["participants.riot_id"] as string | null, "—")
               return (
-                <li
-                  key={id}
-                  data-testid="minute-record-game"
-                  className="slide-in"
-                  style={{ "--stagger": `${Math.min(i * 30, 400)}ms` } as CSSProperties}
-                >
+                <li key={id} data-testid="minute-record-game" className="slide-in" style={{ "--stagger": `${Math.min(i * 30, 400)}ms` } as CSSProperties}>
                   <button
                     type="button"
                     aria-pressed={active}
@@ -2029,10 +2038,7 @@ function MinuteRecords({ scoped, center }: { scoped: (query: CubeQuery) => CubeQ
                     </span>
                     <span
                       data-testid="minute-record-value"
-                      className={cn(
-                        "shrink-0 font-mono text-sm font-semibold tabular-nums",
-                        metric.tone === "bad" ? "text-loss" : "text-foreground",
-                      )}
+                      className={cn("shrink-0 font-mono text-sm font-semibold tabular-nums", deathMetric ? "text-loss" : "text-foreground")}
                     >
                       {value === null ? "—" : metric.fmt(value)}
                     </span>
@@ -2042,12 +2048,11 @@ function MinuteRecords({ scoped, center }: { scoped: (query: CubeQuery) => CubeQ
             })}
           </ol>
 
-          {/* 點一列：和數據總表「單場巔峰」一樣，在下面列出那一場，點卡片看完整戰報 */}
           {pickedRow && pickedDrill && (
-            <div className="reveal mt-3 space-y-2 border-t pt-3" data-testid="minute-record-drill">
+            <div className="reveal space-y-2 border-t pt-3" data-testid="minute-record-drill">
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <div className="text-sm font-semibold">
-                  {splitRiotId(pickedRow["participants.riot_id"] as string | null, "—").name}・{metric.label}・第 {pickedIndex + 1} 名
+                  {splitRiotId(pickedRow["participants.riot_id"] as string | null, "—").name}・{metric.label.replace("單場最高", "")}・第 {pickedIndex + 1} 名
                 </div>
                 <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setPick(null)}>
                   收起
@@ -2059,14 +2064,14 @@ function MinuteRecords({ scoped, center }: { scoped: (query: CubeQuery) => CubeQ
           )}
 
           {cardsOpen && drill && (
-            <div className="reveal mt-3 border-t pt-3">
+            <div className="reveal border-t pt-3">
               {/* 逐場卡片一律走 /api/matches；是哪幾場由上面那個 Cube 查詢決定（participants=遊戲:參賽者） */}
               <MatchList params={{ ...matchParams(), ...drill.params }} showPlayer />
             </div>
           )}
         </>
       )}
-    </Panel>
+    </div>
   )
 }
 
@@ -2369,9 +2374,7 @@ export function Crew() {
         )}
       </Panel>
 
-      <StatsPanel people={ordered} rows={stats.rows} loading={loading || stats.loading} profiles={profiles} />
-
-      <MinuteRecords scoped={q} center={center} />
+      <StatsPanel people={ordered} rows={stats.rows} loading={loading || stats.loading} profiles={profiles} scoped={q} center={center} />
 
       {/* ── 查英雄、查增幅裝置：選一個，看每個人用它的勝率與貢獻 ── */}
       {/* 兩個面板一樣的結構，寬螢幕（1900px 以上，展開的對局卡片才放得進半版）左右並排，其餘上下疊 */}

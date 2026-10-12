@@ -484,6 +484,14 @@ test("好友比較頁：不再出現固定門檻的「適合／不適合」標�
   await expect(panel(page, "全員一覽").getByTestId("crew-row").getByText(/適合/)).toHaveCount(0)
 })
 
+/** 數據總表 → 單場巔峰 → 前 10 場：回傳那個面板 */
+const peakTop = async (page: Page) => {
+  const p = panel(page, "數據總表")
+  await p.getByRole("button", { name: "單場巔峰", exact: true }).click()
+  await p.getByRole("button", { name: "前 10 場", exact: true }).click()
+  return p
+}
+
 /** 比較對象（站長＋追蹤中的帳號）的每一場，某個每分鐘數值由高到低前 10 場；有給中心就只算他也在場的對局。獨立手寫，不經過語意層。 */
 const minuteTop = (numerator: string, center?: string) =>
   sql(
@@ -503,22 +511,23 @@ test.describe("好友比較頁：單場每分鐘紀錄", () => {
   })
 
   test("預設不設中心：每分鐘擊殺的前 10 場由高到低，數值和獨立 SQL 一致（比較對象的每一場一起比）", async ({ page }) => {
-    const p = panel(page, "單場每分鐘紀錄")
+    const p = await peakTop(page)
     const want = minuteTop("p.kills").map((v) => v.toFixed(2))
     await expect(p.getByTestId("minute-record-game")).toHaveCount(want.length)
     expect(await p.getByTestId("minute-record-value").allInnerTexts()).toEqual(want)
   })
 
-  test("切到每分鐘補兵：數值換成補兵的 SQL，同樣是前 10 場", async ({ page }) => {
-    const p = panel(page, "單場每分鐘紀錄")
-    await p.getByRole("button", { name: "每分鐘補兵", exact: true }).click()
+  test("換成每分鐘補兵（下拉選單）：數值換成補兵的 SQL，同樣是前 10 場", async ({ page }) => {
+    const p = await peakTop(page)
+    await p.getByRole("combobox").click()
+    await page.getByRole("option", { name: "單場最高每分鐘補兵", exact: true }).click()
     const want = minuteTop("p.cs").map((v) => v.toFixed(1))
     await expect(p.getByTestId("minute-record-game")).toHaveCount(want.length)
     expect(await p.getByTestId("minute-record-value").allInnerTexts()).toEqual(want)
   })
 
   test("列出這幾場的戰報：按鈕切換成「收起戰報」，再點收起", async ({ page }) => {
-    const p = panel(page, "單場每分鐘紀錄")
+    const p = await peakTop(page)
     const open = p.getByRole("button", { name: "列出這幾場的戰報" })
     await open.click()
     await expect(p.getByRole("button", { name: "收起戰報" })).toBeVisible()
@@ -533,7 +542,7 @@ test.describe("好友比較頁：單場每分鐘紀錄的中心（選填）", ()
   })
 
   test("中心在「比較對象」決定：列表只算他也在場的對局；再按一次取消，回到不設中心", async ({ page }) => {
-    const p = panel(page, "單場每分鐘紀錄")
+    const p = await peakTop(page)
     const picker = panel(page, "比較對象")
     const me = crewMembers().find((m) => m.is_me === 1)!
     const meName = nameOf(me.riot_id)
@@ -556,7 +565,7 @@ test.describe("好友比較頁：單場每分鐘紀錄點一列看那一場", ()
   })
 
   test("點第一列：下面列出那一場（只顯示這一場），再點一次收起", async ({ page }) => {
-    const p = panel(page, "單場每分鐘紀錄")
+    const p = await peakTop(page)
     const first = p.getByTestId("minute-record-game").first()
     await first.locator("button").click()
     const drill = p.getByTestId("minute-record-drill")
