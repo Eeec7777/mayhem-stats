@@ -1907,24 +1907,20 @@ const asClock = (minutes: number) => {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`
 }
 
-function MinuteRecords({ scoped }: { scoped: (query: CubeQuery) => CubeQuery | null }) {
-  const { account, matchParams } = useFilters()
+function MinuteRecords({ scoped, members }: { scoped: (query: CubeQuery) => CubeQuery | null; members: Player[] }) {
+  const { matchParams } = useFilters()
   const [key, setKey] = useState(MINUTE_RECORDS[0].key)
-  // 展開了戰報的那一次（換指標就收起來）
+  // 展開了戰報的那一次（換指標或換中心就收起來）
   const [cardsOpen, setCardsOpen] = useState(false)
   const metric = MINUTE_RECORDS.find((m) => m.key === key) ?? MINUTE_RECORDS[0]
-  // 中心帳號：「切換帳號」目前選的那個（預設是本機帳號）。只算他也在場的對局。
-  const centerName = account ? splitRiotId(account.riot_id, account.puuid).name : ""
-  const onCenter = (query: CubeQuery): CubeQuery | null =>
-    account
-      ? scoped({
-          ...query,
-          // 一對多 join 的等值篩選（game_players，說明在 cube/model/cubes/dimensions.yml）；max 指標不怕它造成的重複列
-          filters: [{ member: "game_players.puuid", operator: "equals", values: [account.puuid] }, ...(query.filters ?? [])],
-        })
-      : null
+  // 中心是選填的。沒設（null）就是整群比較對象的每一場一起比，和原本一樣；設了才只算他也在場的對局。
+  const [centerId, setCenterId] = useState<string | null>(null)
+  const center = members.find((m) => m.puuid === centerId) ?? null
+  const centerName = center ? splitRiotId(center.riot_id, center.puuid).name : ""
   const top = useCube(
-    onCenter({
+    scoped({
+      // 一對多 join 的等值篩選（game_players，說明在 cube/model/cubes/dimensions.yml）；max 指標不怕它造成的重複列
+      ...(center ? { filters: [{ member: "game_players.puuid", operator: "equals", values: [center.puuid] }] } : {}),
       measures: [metric.key],
       dimensions: [
         "participants.participant_key",
@@ -1943,7 +1939,11 @@ function MinuteRecords({ scoped }: { scoped: (query: CubeQuery) => CubeQuery | n
   return (
     <Panel
       title="單場每分鐘紀錄"
-      caption={`只算「${centerName || "中心"}」也在場的對局：比較對象在這些場裡，這個指標最高的前 ${TOP_N} 場。數據總表「單場巔峰」看的是每人一格，這裡看的是哪幾場。用上方的「切換帳號」換中心，跟著模式與期間篩選。`}
+      caption={`${
+        center
+          ? `只算「${centerName}」也在場的對局：比較對象在這些場裡`
+          : "沒設中心，比較對象的每一場一起比"
+      }，這個指標最高的前 ${TOP_N} 場。數據總表「單場巔峰」看的是每人一格，這裡看的是哪幾場。跟著模式與期間篩選。`}
       action={
         drill && (
           <Button size="sm" variant={cardsOpen ? "secondary" : "outline"} onClick={() => setCardsOpen((v) => !v)}>
@@ -1952,6 +1952,32 @@ function MinuteRecords({ scoped }: { scoped: (query: CubeQuery) => CubeQuery | n
         )
       }
     >
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <span className="text-xs text-muted-foreground">中心</span>
+        <ToggleGroup
+          type="single"
+          size="sm"
+          variant="outline"
+          value={center?.puuid ?? "none"}
+          onValueChange={(v) => {
+            // 點已經選的那個會取消（v 是空字串），取消就等於不設
+            setCenterId(!v || v === "none" ? null : v)
+            setCardsOpen(false)
+          }}
+          className="flex-wrap justify-start"
+        >
+          <ToggleGroupItem value="none">不設</ToggleGroupItem>
+          {members.map((m) => {
+            const name = splitRiotId(m.riot_id, m.puuid).name
+            return (
+              <ToggleGroupItem key={m.puuid} value={m.puuid} title={`只算 ${name} 也在場的對局`}>
+                {name}
+              </ToggleGroupItem>
+            )
+          })}
+        </ToggleGroup>
+      </div>
+
       <ToggleGroup
         type="single"
         size="sm"
@@ -1971,14 +1997,12 @@ function MinuteRecords({ scoped }: { scoped: (query: CubeQuery) => CubeQuery | n
         ))}
       </ToggleGroup>
 
-      {!account ? (
-        <EmptyState>還沒有中心帳號，用上方的「切換帳號」選一個。</EmptyState>
-      ) : top.error ? (
+      {top.error ? (
         <QueryError error={top.error} />
       ) : top.loading ? (
         <Skeleton className="h-[360px] w-full" />
       ) : !top.rows.length ? (
-        <EmptyState>{centerName} 在這個模式與期間裡沒有對局。</EmptyState>
+        <EmptyState>{center ? `${centerName} 在這個模式與期間裡沒有對局。` : "這個條件下沒有對局。"}</EmptyState>
       ) : (
         <>
           <ol className="divide-y divide-border/50">
@@ -2306,7 +2330,7 @@ export function Crew() {
 
       <StatsPanel people={ordered} rows={stats.rows} loading={loading || stats.loading} profiles={profiles} />
 
-      <MinuteRecords scoped={q} />
+      <MinuteRecords scoped={q} members={crew} />
 
       {/* ── 查英雄、查增幅裝置：選一個，看每個人用它的勝率與貢獻 ── */}
       {/* 兩個面板一樣的結構，寬螢幕（1900px 以上，展開的對局卡片才放得進半版）左右並排，其餘上下疊 */}
