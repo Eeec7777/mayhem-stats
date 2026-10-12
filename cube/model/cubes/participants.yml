@@ -178,7 +178,7 @@ cubes:
         title: 對局鍵
         sql: "{CUBE}.platform_id || ':' || {CUBE}.game_id"
         type: string
-        public: false
+        public: true
 
       # 公開：對局卡片要標出「這一場的出裝定位」，列表的資料來自 /api/matches，
       # 定位的規則只在語意層有一份，所以前端拿卡片上的這個鍵回頭向 Cube 查（一場一人一列）。

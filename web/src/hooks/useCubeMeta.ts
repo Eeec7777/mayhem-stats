@@ -84,7 +84,7 @@ export function useCubeMeta(): { meta: CubeMeta; loading: boolean; error: string
           // 列進選單會出現兩份，混選時還會撞到 join 路徑錯誤。前端一律直接查 cube。
           if (cube.type === "view") continue
           for (const m of cube.measures ?? []) {
-            if (m.public === false || HIDDEN.test(m.name) || !isPresentable(m)) continue
+            if (m.public === false || HIDDEN.test(m.name) || HIDDEN_CUBE.test(m.name) || !isPresentable(m)) continue
             measures.push(m)
           }
           for (const d of cube.dimensions ?? []) {

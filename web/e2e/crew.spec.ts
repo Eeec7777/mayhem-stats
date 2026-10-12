@@ -493,16 +493,16 @@ const peakTop = async (page: Page) => {
 }
 
 /** 比較對象（站長＋追蹤中的帳號）的每一場，某個每分鐘數值由高到低前 10 場；有給中心就只算他也在場的對局。獨立手寫，不經過語意層。 */
-const minuteTop = (numerator: string, center?: string) =>
+const minuteTop = (numerator: string, centers: string[] = []) =>
   sql(
     `SELECT ${numerator} * 60.0 / NULLIF(p.game_duration, 0) AS v
        FROM match_participants p JOIN matches m USING (platform_id, game_id)
       WHERE m.queue_id = 2400 AND m.is_remake = 0 AND p.game_duration > 0
         AND p.puuid IN (SELECT puuid FROM accounts WHERE is_me = 1 OR tracked = 1)
-        ${center ? "AND EXISTS (SELECT 1 FROM match_participants c WHERE c.platform_id = p.platform_id AND c.game_id = p.game_id AND c.puuid = ?)" : ""}
+        ${centers.map(() => "AND EXISTS (SELECT 1 FROM match_participants c WHERE c.platform_id = p.platform_id AND c.game_id = p.game_id AND c.puuid = ?)").join("\n        ")}
         AND ${numerator} IS NOT NULL
       ORDER BY v DESC LIMIT 10`,
-    center ? [center] : [],
+    centers,
   ).map((r) => Number(r.v))
 
 test.describe("好友比較頁：單場每分鐘紀錄", () => {
@@ -549,7 +549,7 @@ test.describe("好友比較頁：單場每分鐘紀錄的中心（選填）", ()
     const values = () => p.getByTestId("minute-record-value").allInnerTexts()
 
     await picker.getByRole("button", { name: meName, exact: true }).click()
-    const withCenter = minuteTop("p.kills", me.puuid).map((v) => v.toFixed(2))
+    const withCenter = minuteTop("p.kills", [me.puuid]).map((v) => v.toFixed(2))
     await expect(p.getByTestId("minute-record-game")).toHaveCount(withCenter.length)
     expect(await values()).toEqual(withCenter)
 
@@ -574,5 +574,23 @@ test.describe("好友比較頁：單場每分鐘紀錄點一列看那一場", ()
     await expect(drill).toContainText("第 1 名")
     await first.locator("button").click()
     await expect(p.getByTestId("minute-record-drill")).toHaveCount(0)
+  })
+})
+
+test.describe("好友比較頁：中心可多選（只看這幾位都在場的場次）", () => {
+  test.beforeEach(async ({ page }) => {
+    await openPage(page, "crew")
+  })
+
+  test("選兩位：單場每分鐘紀錄只算他們兩位都在場的場次，數值和獨立 SQL 一致", async ({ page }) => {
+    const p = await peakTop(page)
+    const picker = panel(page, "比較對象")
+    const me = crewMembers().find((m) => m.is_me === 1)!
+    const other = crewMembers().find((m) => m.is_me !== 1)!
+    await picker.getByRole("button", { name: nameOf(me.riot_id), exact: true }).click()
+    await picker.getByRole("button", { name: nameOf(other.riot_id), exact: true }).click()
+    const want = minuteTop("p.kills", [me.puuid, other.puuid]).map((v) => v.toFixed(2))
+    await expect(p.getByTestId("minute-record-game")).toHaveCount(want.length)
+    expect(await p.getByTestId("minute-record-value").allInnerTexts()).toEqual(want)
   })
 })

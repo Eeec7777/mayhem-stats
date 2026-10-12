@@ -165,3 +165,12 @@ cubes:
         description: "這場對局裡某一位參賽者的名稱。篩選用；拿來分組會讓一場變成十列，要看「和誰同場」的統計請改用 people_met（teammates）。"
         sql: riot_id
         type: string
+
+    # 「同時在場的人數」：篩選後，每一場裡有幾位被篩中的玩家（不重複）。
+    # 拿來取「含有 A 跟 B 的場」：群組後保留人數等於選取的人數的那些場（和 game_ids 一起用，見 Crew 頁的中心）。
+    measures:
+      - name: n_players
+        title: 篩中的人數（同場）
+        description: "篩選之後，這場裡有幾位被篩中的玩家（不重複）。篩選是某幾個人時，等於他們同場的人數。"
+        sql: puuid
+        type: count_distinct

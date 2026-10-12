@@ -78,7 +78,7 @@ const splitId = splitRiotId
 
 /** 中心（選填）的場次篩選：設了中心就是「他也在場」這一個條件，整頁的查詢都要加上；沒設是空的。
  *  用 context 傳下去，抽屜與戰報列表不必一路帶參數。 */
-const CenterFilterContext = createContext<CubeFilter[]>([])
+const CenterFilterContext = createContext<CubeFilter[] | null>([])
 
 function PlayerName({ player, className }: { player: Player; className?: string }) {
   const { name, tag } = splitId(player.riot_id, player.puuid)
@@ -638,7 +638,7 @@ function PlayerMatches({ puuid, filters, recordMetric }: { puuid: string; filter
   const { apply, matchParams } = useFilters()
   const centerFilters = useContext(CenterFilterContext)
   const ids = useCube(
-    apply(
+    centerFilters === null ? null : apply(
       {
         measures: ["participants.games", ...(recordMetric ? [recordMetric] : [])],
         dimensions: ["matches.game_id"],
@@ -1083,10 +1083,10 @@ function PlayerDrawerBody({
   const roleFilter = role ? [{ member: "builds.build_role", operator: "equals" as const, values: [role] }] : []
   const centerFilters = useContext(CenterFilterContext)
   const contrib = useCube(
-    apply({ measures: PERF_MEASURES, filters: [crewFilter([player.puuid]), ...roleFilter, ...centerFilters], limit: 1 }, "all"),
+    centerFilters === null ? null : apply({ measures: PERF_MEASURES, filters: [crewFilter([player.puuid]), ...roleFilter, ...centerFilters], limit: 1 }, "all"),
   )
   const champs = useCube(
-    apply(
+    centerFilters === null ? null : apply(
       {
         measures: STAT_MEASURES,
         dimensions: ["champions.name", "champions.icon_path"],
@@ -1730,14 +1730,14 @@ function StatsPanel({
   loading,
   profiles,
   scoped,
-  center,
+  centers,
 }: {
   people: Player[]
   rows: CubeRow[]
   loading: boolean
   profiles: Map<string, Profile>
   scoped: (query: CubeQuery) => CubeQuery | null
-  center: Player | null
+  centers: Player[]
 }) {
   const [setId, setSetId] = useState<string>("overview")
   // 單場巔峰組的兩種看法：每人一格（表）／前 10 場（每場一列）
@@ -1797,7 +1797,7 @@ function StatsPanel({
             {isMix ? "六種出裝各占他場次的幾成。不是好壞，是拿來對照其他數字的；點數字看那種出裝的每一場" : set?.caption}
           </p>
           {setId === "peak" && peakView === "top" ? (
-            <PeakTop scoped={scoped} cols={cols} center={center} />
+            <PeakTop scoped={scoped} cols={cols} centers={centers} />
           ) : (
           <>
           <div className="overflow-x-auto">
@@ -1915,7 +1915,7 @@ const asClock = (minutes: number) => {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`
 }
 
-function PeakTop({ scoped, cols, center }: { scoped: (query: CubeQuery) => CubeQuery | null; cols: StatCol[]; center: Player | null }) {
+function PeakTop({ scoped, cols, centers }: { scoped: (query: CubeQuery) => CubeQuery | null; cols: StatCol[]; centers: Player[] }) {
   const { matchParams } = useFilters()
   const perMin = cols.filter((c) => c.label.includes("每分鐘"))
   const totals = cols.filter((c) => !c.label.includes("每分鐘"))
@@ -1926,7 +1926,7 @@ function PeakTop({ scoped, cols, center }: { scoped: (query: CubeQuery) => CubeQ
   // 點了其中一列：記下那一場與當時的指標，換了指標就自動失效
   const [pick, setPick] = useState<{ id: string; metric: string } | null>(null)
   const metric = cols.find((c) => c.key === key) ?? cols[0]
-  const centerName = center ? splitRiotId(center.riot_id, center.puuid).name : ""
+  const centerNames = centers.map((c) => splitRiotId(c.riot_id, c.puuid).name).join("、")
   const top = useCube(
     scoped({
       measures: [metric.key],
@@ -1990,7 +1990,7 @@ function PeakTop({ scoped, cols, center }: { scoped: (query: CubeQuery) => CubeQ
         )}
       </div>
       <p className="text-[11px] text-muted-foreground">
-        {center ? `只算「${centerName}」也在場的對局：比較對象在這些場裡` : "沒設中心，比較對象的每一場一起比"}，「{metric.label.replace("單場最高", "")}」最高的前 {TOP_N} 場。點一列看那一場。
+        {centers.length ? `只算「${centerNames}」都在場的對局：比較對象在這些場裡` : "沒設中心，比較對象的每一場一起比"}，「{metric.label.replace("單場最高", "")}」最高的前 {TOP_N} 場。點一列看那一場。
       </p>
 
       {top.error ? (
@@ -1998,7 +1998,7 @@ function PeakTop({ scoped, cols, center }: { scoped: (query: CubeQuery) => CubeQ
       ) : top.loading ? (
         <Skeleton className="h-[360px] w-full" />
       ) : !top.rows.length ? (
-        <EmptyState>{center ? `${centerName} 在這個模式與期間裡沒有對局。` : "這個條件下沒有對局。"}</EmptyState>
+        <EmptyState>{centers.length ? `${centerNames} 在這個模式與期間裡沒有對局。` : "這個條件下沒有對局。"}</EmptyState>
       ) : (
         <>
           <ol className="divide-y divide-border/50">
@@ -2093,18 +2093,52 @@ export function Crew() {
   )
 
   // 中心（選填）：在上面的「比較對象」決定，目前只影響「單場每分鐘紀錄」。沒設就是整群比較對象一起比。
-  const [centerId, setCenterId] = useState<string | null>(null)
-  const center = crew.find((p) => p.puuid === centerId) ?? null
-  // 中心的場次條件（一對多 join 的等值篩選，說明在 cube/model/cubes/dimensions.yml 的 game_players）
-  const centerFilters = useMemo<CubeFilter[]>(
-    () => (center ? [{ member: "game_players.puuid", operator: "equals", values: [center.puuid] }] : []),
-    [center],
+  // 中心（選填，可多選）：只看這幾位都在場的場次。沒設就是整群比較對象的每一場。
+  const [centerIds, setCenterIds] = useState<string[]>([])
+  const centers = crew.filter((p) => centerIds.includes(p.puuid))
+  const centerNames = centers.map((p) => splitId(p.riot_id, p.puuid).name).join("、")
+  // 兩位以上：每一場裡被選中的人有幾位在場（一場一列），之後只留下人數等於選取人數的那些場
+  const together = useCube(
+    centers.length >= 2
+      ? apply(
+          {
+            measures: ["game_players.n_players"],
+            dimensions: ["participants.game_key"],
+            filters: [{ member: "game_players.puuid", operator: "equals", values: centers.map((p) => p.puuid) }],
+            limit: NO_LIMIT,
+          },
+          "all",
+        )
+      : null,
   )
+  const sharedKeys =
+    centers.length >= 2
+      ? together.rows.filter((r) => Number(r["game_players.n_players"]) === centers.length).map((r) => String(r["participants.game_key"]))
+      : []
+  // null 表示還不能查：同場的場次還在算，或這幾位一場都沒有一起打過
+  const centerReady = centers.length < 2 || (!together.loading && !together.error && sharedKeys.length > 0)
+  const centerFilters: CubeFilter[] | null = !centerReady
+    ? null
+    : centers.length === 0
+      ? []
+      : centers.length === 1
+        ? [{ member: "game_players.puuid", operator: "equals", values: [centers[0].puuid] }]
+        : [{ member: "participants.game_key", operator: "equals", values: sharedKeys }]
+  const centerNote =
+    centers.length === 0
+      ? "沒設中心：整頁是整群比較對象的每一場"
+      : centers.length === 1
+        ? `整頁只看「${centerNames}」在的場次`
+        : !centerReady
+          ? together.loading
+            ? `計算「${centerNames}」同場的場次中…`
+            : `「${centerNames}」沒有一起打過的場次`
+          : `整頁只看「${centerNames}」都在場的場次（${sharedKeys.length} 場）`
 
   // 全域條件（模式、期間、下鑽）照套，但不鎖定帳號（scope "all"），改成鎖定這群人。equals 給多個值就是 IN。
   const crewFilter = (ids: string[]): CubeFilter => ({ member: "participants.puuid", operator: "equals", values: ids })
   const q = (query: CubeQuery): CubeQuery | null =>
-    puuids.length ? apply({ ...query, filters: [crewFilter(puuids), ...centerFilters, ...(query.filters ?? [])] }, "all") : null
+    puuids.length && centerFilters ? apply({ ...query, filters: [crewFilter(puuids), ...centerFilters, ...(query.filters ?? [])] }, "all") : null
 
   const summary = useCube(
     q({ measures: [...STAT_MEASURES, "participants.kda", ...PERF_PARTS.map((c) => c.key)], dimensions: ["participants.puuid"], limit: NO_LIMIT }),
@@ -2126,9 +2160,9 @@ export function Crew() {
   // 出裝的傷害類型（AD／AP）：玩家類型與數據總表的出裝比例用
   const dmgTypes = useCube(q({ measures: ["participants.games"], dimensions: ["participants.puuid", "builds.damage_type"], limit: NO_LIMIT }))
   // 參照列：所有參賽者的出裝比例（不鎖玩家，也不受上方「拿掉誰」影響）
-  const everyone = useCube(apply({ measures: ["participants.games", "participants.winrate", "participants.kda"], filters: centerFilters }, "all"))
-  const everyoneRoles = useCube(apply({ measures: ["participants.games"], dimensions: ["builds.build_role"], filters: centerFilters, limit: NO_LIMIT }, "all"))
-  const error = summary.error ?? roles.error ?? champs.error ?? augments.error ?? everyone.error ?? everyoneRoles.error ?? stats.error ?? dmgTypes.error
+  const everyone = useCube(centerFilters === null ? null : apply({ measures: ["participants.games", "participants.winrate", "participants.kda"], filters: centerFilters }, "all"))
+  const everyoneRoles = useCube(centerFilters === null ? null : apply({ measures: ["participants.games"], dimensions: ["builds.build_role"], filters: centerFilters, limit: NO_LIMIT }, "all"))
+  const error = summary.error ?? roles.error ?? champs.error ?? augments.error ?? everyone.error ?? everyoneRoles.error ?? stats.error ?? dmgTypes.error ?? together.error
   const loading = summary.loading || roles.loading || champs.loading || augments.loading || everyone.loading || everyoneRoles.loading
 
   const sumOf = (puuid: string) => summary.rows.find((r) => r["participants.puuid"] === puuid)
@@ -2226,23 +2260,21 @@ export function Crew() {
           })}
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-2 border-t pt-3">
-          <span className="text-xs text-muted-foreground">中心（選填）</span>
-          <ToggleGroup
-            type="single"
-            size="sm"
-            variant="outline"
-            value={center?.puuid ?? "none"}
-            onValueChange={(v) => setCenterId(!v || v === "none" ? null : v)}
-            className="flex-wrap justify-start"
-          >
-            <ToggleGroupItem value="none">不設</ToggleGroupItem>
-            {crew.map((p) => (
-              <ToggleGroupItem key={p.puuid} value={p.puuid} title={`中心設為 ${splitId(p.riot_id, p.puuid).name}`}>
-                {splitId(p.riot_id, p.puuid).name}
-              </ToggleGroupItem>
-            ))}
+          <span className="text-xs text-muted-foreground">中心（選填，可多選）</span>
+          <Button size="sm" variant={centers.length ? "outline" : "secondary"} className="h-7 text-xs" disabled={!centers.length} onClick={() => setCenterIds([])}>
+            不設
+          </Button>
+          <ToggleGroup type="multiple" size="sm" variant="outline" value={centerIds} onValueChange={setCenterIds} className="flex-wrap justify-start">
+            {crew.map((p) => {
+              const name = splitId(p.riot_id, p.puuid).name
+              return (
+                <ToggleGroupItem key={p.puuid} value={p.puuid} title={`加入中心：只看 ${name} 也在場的場次`}>
+                  {name}
+                </ToggleGroupItem>
+              )
+            })}
           </ToggleGroup>
-          <span className="text-[11px] text-muted-foreground">選了中心，整頁都只算他也在場的場次</span>
+          <span className="text-[11px] text-muted-foreground">{centerNote}</span>
         </div>
       </Panel>
 
@@ -2374,7 +2406,7 @@ export function Crew() {
         )}
       </Panel>
 
-      <StatsPanel people={ordered} rows={stats.rows} loading={loading || stats.loading} profiles={profiles} scoped={q} center={center} />
+      <StatsPanel people={ordered} rows={stats.rows} loading={loading || stats.loading} profiles={profiles} scoped={q} centers={centers} />
 
       {/* ── 查英雄、查增幅裝置：選一個，看每個人用它的勝率與貢獻 ── */}
       {/* 兩個面板一樣的結構，寬螢幕（1900px 以上，展開的對局卡片才放得進半版）左右並排，其餘上下疊 */}
