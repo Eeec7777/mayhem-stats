@@ -45,6 +45,11 @@ const EMPTY: CubeMeta = {
 const HIDDEN =
   /\.(id|game_key|puuid|subject_puuid|champion_id|team_id|win|is_me|icon_path|alias|slot|augment_id|item_id|game_id|duration_minutes|ended_surrender|queue_id|participant_key)$/
 
+/** 整個 cube 都不進選單：game_players 是「某人有沒有在這場」的篩選用 cube，
+ *  一場十列，拿來分組會讓每一場展開成十列（平均類指標會被重複計算）。
+ *  要看「和誰同場」的統計請用隊友／對手那一家（teammates）。 */
+const HIDDEN_CUBE = /^game_players\./
+
 /** 模型裡沒給中文標題的成員不進選單——多半是內部欄位，
  *  暴露出來只會讓人選到看不懂的東西。 */
 function isPresentable(m: { shortTitle?: string; title?: string }) {
@@ -83,7 +88,7 @@ export function useCubeMeta(): { meta: CubeMeta; loading: boolean; error: string
             measures.push(m)
           }
           for (const d of cube.dimensions ?? []) {
-            if (d.public === false || HIDDEN.test(d.name) || !isPresentable(d)) continue
+            if (d.public === false || HIDDEN.test(d.name) || HIDDEN_CUBE.test(d.name) || !isPresentable(d)) continue
             if (d.type === "time") timeDimensions.push(d)
             else dimensions.push(d)
           }

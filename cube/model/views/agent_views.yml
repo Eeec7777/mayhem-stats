@@ -18,6 +18,9 @@ views:
       多人視角下同一隊不會被算五次。
       以 augment 或 item 分組時一場會出現在多列底下，玩家對局數與勝率仍以 distinct 玩家對局列計算。
       participant_context 提供前一場結果、休息與 session 階段；team_context 提供我方／敵方隊伍差距與首塔等終場資訊。
+      best_* 是單場紀錄（max：範圍內每分鐘數值最高的那一場），和同名的平均指標（dpm、gpm…）算式相同；
+      要知道是哪一場，用 participant_key 分組再依同一個 best_* 排序。
+      只要「某個帳號也在場」的對局，用 co_player_puuid／co_player 篩（只能篩，不能分組：一對多，一場十列）。
       按天分組用 local_date；用 played_at 篩日期區間時查詢要帶 "timezone": "Asia/Taipei"。
     cubes:
       - join_path: participants
@@ -30,6 +33,9 @@ views:
           - fed
           - had_multikill
           - riot_id
+          # 某一場的某一位參賽者。要問「最好的那一場是哪一場」時，用它分組再依 best_* 排序：
+          # 一組只有一列，max 就等於該場的值
+          - participant_key
           - team_side
           - party_size
           - result
@@ -99,6 +105,19 @@ views:
           - avg_minion_damage
           - minion_damage_per_min
           - best_crit
+          # 單場紀錄：每分鐘數值最高的那一場（max，不是平均）
+          - best_kills_per_min
+          - max_deaths_per_min
+          - best_assists_per_min
+          - max_dpm
+          - best_taken_per_min
+          - best_mitigated_per_min
+          - best_heal_per_min
+          - best_cc_time_per_min
+          - max_gpm
+          - best_cs_per_min
+          - best_objective_damage_per_min
+          - best_minion_damage_per_min
           - avg_units_healed
           - avg_gold
           - gpm
@@ -280,6 +299,16 @@ views:
             alias: contribution_cc
           - name: heal_pct
             alias: contribution_heal
+
+      # 「某個帳號也在場的那些對局」：加一個 co_player_puuid（或 co_player）等值篩選就好。
+      # 只能當篩選用——一對多，拿來分組會讓一場變成十列、平均類指標被重複計算。
+      # 要問「和誰同場的勝率」請改用 people_met。
+      - join_path: participants.game_players
+        includes:
+          - name: puuid
+            alias: co_player_puuid
+          - name: riot_id
+            alias: co_player
 
       - join_path: participants.augments
         includes:

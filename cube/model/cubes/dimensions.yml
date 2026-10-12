@@ -120,3 +120,48 @@ cubes:
       - name: icon_path
         sql: item_icon
         type: string
+
+  # 一場對局裡的每一位參賽者，只拿來當「這場有誰」的篩選用。
+  #
+  # 為什麼需要它：「和某個帳號一起打的那些場」沒辦法寫成 participants 上的一個維度——
+  # 條件的值是「同場那十個人」這個集合，不是單一值，而 Cube 的篩選是「成員 運算子 值」。
+  # 做成一對多 join 之後它就只是一個等值篩選（game_players.puuid = 某人），
+  # SQLite 可以先用 idx_mp_puuid_champ 找出那個人的每一場，再用 idx_mp_game 接回來。
+  # 不要改用「把同場十個人串起來、再用 contains 比對」：那是 LIKE，每一列都要重算一次字串，
+  # 而且 SQLite 方言在 Tesseract 規劃器下沒有對應的範本。
+  #
+  # ⚠ 一對多：一場有十列。以它的欄位「分組」時一場會展開成十列，場次類指標要 count_distinct、
+  # 平均類指標會被重複計算（max 不受影響，所以紀錄榜可以安心用）。這個 cube 是設計來只出現在篩選裡的。
+  - name: game_players
+    title: 同場玩家（篩選用）
+    sql_table: match_participants
+    description: >
+      一場對局裡的每一位參賽者（一場十列）。用途是篩出「某個帳號也在場的對局」：
+      以 participants 為主，加上 game_players.puuid 等於某人，就只剩他參與的那些場。
+      一對多 join，不要拿來當分組維度（一場會變成十列，平均類指標會被重複計算）。
+
+    # 與 participants.yml 相同的 refresh key,理由寫在那裡。SQL 必須一字不差才會被合併。
+    refresh_key:
+      sql: >
+        SELECT (SELECT COALESCE(MAX(ingested_at), 0) FROM matches) || ':' || (SELECT COUNT(*) FROM dim_augments) || ':' || (SELECT group_concat(puuid || is_me || tracked) FROM accounts) || ':' || (SELECT COALESCE(MAX(version), 0) FROM mat_state)
+
+    dimensions:
+      # 整數主鍵（來源表的 rowid）。字串串接的主鍵在「先撈主鍵再 join 回本表」那條路上用不到索引，
+      # 理由與實測見 participants.yml 的 id。
+      - name: id
+        sql: "{CUBE}.rowid"
+        type: number
+        primary_key: true
+        public: false
+
+      - name: puuid
+        title: 同場玩家 ID
+        description: "這場對局裡某一位參賽者的 puuid。篩選用：等於某人 ＝ 只看他也在場的對局。"
+        sql: puuid
+        type: string
+
+      - name: riot_id
+        title: 同場玩家名稱（篩選用）
+        description: "這場對局裡某一位參賽者的名稱。篩選用；拿來分組會讓一場變成十列，要看「和誰同場」的統計請改用 people_met（teammates）。"
+        sql: riot_id
+        type: string

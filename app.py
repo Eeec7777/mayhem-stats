@@ -137,7 +137,8 @@ def mask_name(riot_id):
 
 # Cube 回應裡會帶名稱的成員。公開模式下在代理這一層換掉,
 # 前端和語意層都不用改——語意層本來就該回真名,遮不遮是對外開放的決定。
-MASKED_MEMBERS = (".riot_id", ".player")
+# 新增帶名稱的成員（例如 my_performance.co_player）時,記得把它的結尾加進來。
+MASKED_MEMBERS = (".riot_id", ".player", ".co_player")
 
 
 def mask_cube(payload):
