@@ -9,6 +9,7 @@ mayhem.db-shm
 # 開機自動啟動的執行記錄
 autostart.log
 autostart.log.old
+autostart.err
 mirror.log
 mirror.log.old
 
