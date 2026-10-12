@@ -309,8 +309,7 @@ cubes:
           spread AS (
             SELECT *,
               AVG(perf_raw) OVER (PARTITION BY queue_id, acell) AS perf_avg,
-              AVG(perf_raw * perf_raw) OVER (PARTITION BY queue_id, acell) AS perf_sq,
-              AVG(perf_bonus) OVER (PARTITION BY queue_id, acell) AS bonus_avg
+              AVG(perf_raw * perf_raw) OVER (PARTITION BY queue_id, acell) AS perf_sq
             FROM combined
           ),
           scaled AS (
