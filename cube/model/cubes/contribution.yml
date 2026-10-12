@@ -296,7 +296,13 @@ cubes:
               -- 近戰英雄的輸出、承傷超過同類型中位數的部分，再乘 0.25／0.15 加上去。和坦克、輔助的加分不同，
               -- 這個不扣回平均——近戰英雄的平均分會真的比較高（打得好才有：低於中位數不加也不扣）。
               -- 近戰要貼身打，同樣的輸出要冒比較大的風險、也比較常死（死亡已經在輸出、承傷裡打折），所以給額外的分。
-              ROUND(CASE WHEN k.is_melee THEN 0.25 * MAX(0, COALESCE(k.pa_dmg, 50) - 50) + 0.15 * MAX(0, COALESCE(k.pa_soak, 50) - 50) ELSE 0 END, 9) AS melee_bonus
+              ROUND(CASE WHEN k.is_melee THEN 0.25 * MAX(0, COALESCE(k.pa_dmg, 50) - 50) + 0.15 * MAX(0, COALESCE(k.pa_soak, 50) - 50) ELSE 0 END, 9) AS melee_bonus,
+              -- 坦克、輔助的本職加成（2026-10-11 使用者的要求：專門玩坦克、輔助的人分數太低）：本職的兩項超過中位數的部分
+              -- 再乘 0.15 加上去，同樣不扣回平均。坦克看承傷、控場；輔助看控場、治療護盾（再乘分量）
+              ROUND(CASE k.build_role
+                      WHEN '坦克' THEN 0.15 * MAX(0, COALESCE(k.pa_soak, 50) - 50) + 0.15 * MAX(0, COALESCE(k.pa_cc, 50) - 50)
+                      WHEN '輔助' THEN 0.15 * MAX(0, COALESCE(k.pa_cc, 50) - 50) + 0.15 * k.heal_k * MAX(0, COALESCE(k.pa_heal, 50) - 50)
+                      ELSE 0 END, 9) AS role_bonus
             FROM healed k LEFT JOIN weights w ON w.build_role = k.build_role
               LEFT JOIN weights_rank r ON r.build_role = k.build_role
           ),
@@ -312,13 +318,15 @@ cubes:
             -- 為什麼：加權平均的離散程度看權重怎麼分——輸出位幾乎只看輸出一軸（標準差 20.7），坦克、輔助的工作分散在
             -- 承傷／參團／控場幾個不太相關的軸上（17.8／15.0），結果坦克、輔助打得再好分數也上不去（P90 74／71 vs 79），
             -- 每隊最高分是坦克的只有應有的 0.73 倍、輔助 0.41 倍。拉成同一把尺後「同類型裡打得一樣出色」就是同一個分數。
-            -- 坦克、輔助的加分在拉尺之後直接疊上去，再扣掉比較對象的平均加分（所以平均仍是 50）：
+            -- 坦克、輔助的加分在拉尺之後直接疊上去。原本會扣掉比較對象的平均加分（讓平均維持 50），2026-10-11 依使用者的要求
+            -- 改成不扣：坦克、輔助打出額外的輸出（輔助另加承傷）就是淨加分，加上本職加成（role_bonus），平均會高於 50。
+            -- 以下是改成不扣之前的說明：
             -- 不再壓回標準差 20，輸出好的坦克才會真的往上跳（輸出前 20% 的坦克平均 68→73，每隊最高分是坦克 0.82→0.92 倍、輔助 0.48→0.70 倍）。
             -- 代價：坦克、輔助的標準差變成約 24（其他出裝 20）。
             SELECT *,
               CASE WHEN perf_raw IS NULL THEN NULL
                    WHEN perf_sq - perf_avg * perf_avg <= 1e-9 THEN 50.0
-                   ELSE ROUND(MIN(100.0, MAX(0.0, 50.0 + 20.0 * (perf_raw - perf_avg) / SQRT(perf_sq - perf_avg * perf_avg) + perf_bonus - bonus_avg + melee_bonus)), 9) END AS perf
+                   ELSE ROUND(MIN(100.0, MAX(0.0, 50.0 + 20.0 * (perf_raw - perf_avg) / SQRT(perf_sq - perf_avg * perf_avg) + perf_bonus + melee_bonus + role_bonus)), 9) END AS perf
             FROM spread
           )
           SELECT participant_rowid, build_role, cell, p_dmg, p_soak, p_surv, p_kp, p_cc, p_heal, heal_src,
@@ -327,7 +335,7 @@ cubes:
                            ELSE 100.0 * (PERCENT_RANK() OVER (PARTITION BY queue_id, cell, comp IS NULL ORDER BY comp) * (COUNT(*) OVER (PARTITION BY queue_id, cell, comp IS NULL) - 1)
                                          + CUME_DIST() OVER (PARTITION BY queue_id, cell, comp IS NULL ORDER BY comp) * COUNT(*) OVER (PARTITION BY queue_id, cell, comp IS NULL) - 1)
                                 / (2.0 * (COUNT(*) OVER (PARTITION BY queue_id, cell, comp IS NULL) - 1)) END AS score,
-            pa_dmg, pa_soak, pa_surv, pa_kp, pa_cc, pa_heal, pa_minion, pa_obj, is_melee, melee_bonus, perf
+            pa_dmg, pa_soak, pa_surv, pa_kp, pa_cc, pa_heal, pa_minion, pa_obj, is_melee, melee_bonus, role_bonus, perf
           FROM scaled
 
     # 與 participants.yml 相同的 refresh key，理由寫在那裡。SQL 必須一字不差才會被合併。
