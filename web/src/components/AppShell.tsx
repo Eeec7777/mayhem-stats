@@ -223,7 +223,7 @@ function VersionFilter() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="sm" className="h-8 w-[150px] justify-between gap-2 font-normal" disabled={loading && !options.length}>
+        <Button variant="outline" size="sm" className="h-7 w-[150px] justify-between gap-2 rounded-[min(var(--radius-md),10px)] text-sm font-normal" disabled={loading && !options.length}>
           <span className="truncate">{label}</span>
           <ChevronDown className="size-3.5 shrink-0 opacity-60" />
         </Button>
