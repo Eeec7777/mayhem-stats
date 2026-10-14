@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type ReactNode } from "react"
+import { useMemo, useState, type CSSProperties, type ReactNode } from "react"
 import {
   Calculator,
   LayoutDashboard,
@@ -20,6 +20,7 @@ import {
   GitCompareArrows,
   Shield,
   Clapperboard,
+  ChevronDown,
 } from "lucide-react"
 import {
   Sidebar,
@@ -40,13 +41,22 @@ import {
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { useCollectorStatus } from "@/hooks/useCube"
+import { useCollectorStatus, useCube } from "@/hooks/useCube"
 import { DATE_RANGES, useFilters } from "@/lib/filters"
 import { MAYHEM_QUEUE_ID } from "@/lib/cube"
 import { AccountSwitcher, ViewingOtherBanner } from "@/components/AccountSwitcher"
@@ -178,6 +188,70 @@ function CollectorPill() {
   )
 }
 
+/** 遊戲版本（主.次）的多選。選項來自資料裡實際有的版本，不受期間篩選影響（選了 7 天也要看得到舊版本）。 */
+function VersionFilter() {
+  const { versions, setVersions } = useFilters()
+  const query = useMemo(
+    () => ({
+      measures: ["matches.count"],
+      dimensions: ["matches.patch"],
+      filters: [{ member: "matches.queue_id", operator: "equals" as const, values: [MAYHEM_QUEUE_ID] }],
+      order: { "matches.patch": "asc" as const },
+      limit: 100,
+    }),
+    [],
+  )
+  const { rows, loading } = useCube(query)
+  const options = useMemo(
+    () =>
+      rows
+        .map((r) => ({ patch: String(r["matches.patch"]), games: Number(r["matches.count"] ?? 0) }))
+        // 版號要照數字排（16.9 在 16.10 前面），字串排序會錯
+        .sort((a, b) => {
+          const [am, an] = a.patch.split(".").map(Number)
+          const [bm, bn] = b.patch.split(".").map(Number)
+          return am - bm || an - bn
+        }),
+    [rows],
+  )
+  const toggle = (patch: string, on: boolean) => {
+    const next = on ? [...versions, patch] : versions.filter((v) => v !== patch)
+    setVersions(options.map((o) => o.patch).filter((p) => next.includes(p)))
+  }
+  const label = !versions.length ? "全部版本" : versions.length <= 2 ? versions.join("、") : `${versions[0]} 等 ${versions.length} 個`
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="outline" size="sm" className="h-8 w-[150px] justify-between gap-2 font-normal" disabled={loading && !options.length}>
+          <span className="truncate">{label}</span>
+          <ChevronDown className="size-3.5 shrink-0 opacity-60" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-64">
+        <DropdownMenuLabel>遊戲版本（可多選）</DropdownMenuLabel>
+        <DropdownMenuItem onSelect={() => setVersions([])} disabled={!versions.length}>
+          全部版本
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        {options.map((o) => (
+          <DropdownMenuCheckboxItem
+            key={o.patch}
+            checked={versions.includes(o.patch)}
+            // 多選時選單不要每點一下就關掉
+            onSelect={(e) => e.preventDefault()}
+            onCheckedChange={(on) => toggle(o.patch, on)}
+          >
+            <span className="font-mono">{o.patch}</span>
+            <span className="ml-auto pl-4 text-xs text-muted-foreground">{o.games} 場</span>
+          </DropdownMenuCheckboxItem>
+        ))}
+        {!options.length && !loading && <div className="px-2 py-1.5 text-xs text-muted-foreground">資料裡還沒有版本資訊</div>}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
 function GlobalFilters() {
   const { queueId, setQueueId, dateRange, setDateRange } = useFilters()
 
@@ -206,6 +280,8 @@ function GlobalFilters() {
           ))}
         </SelectContent>
       </Select>
+
+      <VersionFilter />
 
     </div>
   )

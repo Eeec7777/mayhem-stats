@@ -70,6 +70,9 @@ type FilterState = {
   setQueueId: (id: string | null) => void
   dateRange: string
   setDateRange: (range: string) => void
+  /** 遊戲版本（主.次，例如 16.17）。多選；空陣列 = 全部版本。 */
+  versions: string[]
+  setVersions: (versions: string[]) => void
   drills: Drill[]
   addDrill: (drill: Drill) => void
   removeDrill: (index: number) => void
@@ -93,6 +96,7 @@ export function FilterProvider({ children }: { children: ReactNode }) {
   const [account, setAccount] = useState<Player | null>(null)
   const [queueId, setQueueId] = useState<string | null>(MAYHEM_QUEUE_ID)
   const [dateRange, setDateRange] = useState<string>("all")
+  const [versions, setVersions] = useState<string[]>([])
   const [drills, setDrills] = useState<Drill[]>([])
   const [ready, setReady] = useState(false)
   const [viewer, setViewer] = useState<Viewer | null>(null)
@@ -149,6 +153,9 @@ export function FilterProvider({ children }: { children: ReactNode }) {
     if (queueId) {
       baseline.push({ member: "matches.queue_id", operator: "equals", values: [queueId] })
     }
+    if (versions.length) {
+      baseline.push({ member: "matches.patch", operator: "equals", values: versions })
+    }
 
     return {
       ready,
@@ -165,6 +172,8 @@ export function FilterProvider({ children }: { children: ReactNode }) {
       setQueueId,
       dateRange,
       setDateRange,
+      versions,
+      setVersions,
       drills,
       addDrill: (drill) =>
         setDrills((prev) =>
@@ -188,6 +197,7 @@ export function FilterProvider({ children }: { children: ReactNode }) {
         const params: Record<string, string> = {}
         if (account) params.puuid = account.puuid
         if (queueId) params.queue = queueId
+        if (versions.length) params.patch = versions.join(",")
         if (bounds) {
           params.date_from = bounds[0]
           params.date_to = bounds[1]
@@ -199,6 +209,7 @@ export function FilterProvider({ children }: { children: ReactNode }) {
         const remap = (member: string) => {
           if (cube === "augment_pairs" && member === "participants.puuid") return "augment_pairs.puuid"
           if (cube === "augment_pairs" && member === "matches.queue_id") return "augment_pairs.queue_id"
+          if (cube === "augment_pairs" && member === "matches.patch") return "augment_pairs.patch"
           return member
         }
         const scoped = (scope === "all" ? baseline.filter((f) => f.member !== "participants.puuid") : baseline)
@@ -231,7 +242,7 @@ export function FilterProvider({ children }: { children: ReactNode }) {
     }
     // setLinked 每次渲染都是新函式，但它讀的 players 已經在依賴裡
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, account, players, viewer, queueId, dateRange, drills])
+  }, [ready, account, players, viewer, queueId, dateRange, versions, drills])
 
   return <FilterContext.Provider value={value}>{children}</FilterContext.Provider>
 }

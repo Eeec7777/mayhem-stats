@@ -17,6 +17,7 @@ import hashlib
 import html
 import json
 import os
+import re
 import urllib.parse
 import secrets
 import sqlite3
@@ -965,6 +966,7 @@ def recent_matches(
     hour_to: Optional[int] = None,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
+    patch: Optional[str] = None,
     with_puuid: Optional[str] = None,
     relation: Optional[str] = None,
     champion: Optional[str] = None,
@@ -1051,6 +1053,13 @@ def recent_matches(
         if date_to is not None:
             slice_sql += " AND m.local_date <= ?"
             slice_params.append(date_to)
+        if patch is not None:
+            # 版本是範圍條件（和期間相同），多值用逗號分隔，每個值是「主.次」（例如 16.17），取該次版號下的所有小更新
+            versions = [v.strip() for v in patch.split(",") if v.strip()]
+            if not versions or not all(re.fullmatch(r"\d+\.\d+", v) for v in versions):
+                return JSONResponse(status_code=400, content={"error": "patch 必須是逗號分隔的主.次版號，例如 16.17"})
+            slice_sql += " AND (" + " OR ".join("m.game_version LIKE ?" for _ in versions) + ")"
+            slice_params.extend(f"{v}.%" for v in versions)
         if with_puuid is not None:
             if relation not in (None, "teammate", "opponent"):
                 return JSONResponse(status_code=400, content={"error": "relation 只能是 teammate 或 opponent"})

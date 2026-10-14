@@ -18,6 +18,7 @@ cubes:
           m.queue_id,
           m.game_duration,
           m.local_date,
+          m.game_version,
           a.augment_id AS augment_a_id,
           b.augment_id AS augment_b_id,
           c.name AS champion_name,
@@ -96,6 +97,12 @@ cubes:
         title: 日期
         sql: local_date
         type: time
+        meta: { group: 時間 }
+
+      - name: patch
+        title: 遊戲版本
+        sql: "substr({CUBE}.game_version, 1, instr({CUBE}.game_version, '.') - 1) || '.' || substr(substr({CUBE}.game_version, instr({CUBE}.game_version, '.') + 1), 1, instr(substr({CUBE}.game_version, instr({CUBE}.game_version, '.') + 1), '.') - 1)"
+        type: string
         meta: { group: 時間 }
 
       - name: pair

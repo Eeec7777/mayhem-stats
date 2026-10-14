@@ -144,9 +144,11 @@ cubes:
           group: 時間
 
     measures:
+      # 對局數（每場一次）。版本選單用它算「這個版本打了幾場」；玩家對局數請用 participants.games
       - name: count
+        title: 對局數
         type: count
-        public: false
+        meta: { group: 對局 }
 
       - name: avg_duration
         title: 平均對局時長
