@@ -245,7 +245,11 @@ const NUM_CLASS: Record<Strength, string> = {
 }
 
 /** 一人一列的格線，class 寫成完整字串（Tailwind 掃不到拼出來的） */
-const ROW_COLS = "grid-cols-[13rem_6rem_minmax(0,1fr)_minmax(0,1fr)]"
+/** 寬的時候四欄（名字、雷達、出裝、英雄）；窄的時候兩欄：名字與雷達在上，出裝、英雄各佔整行堆疊。
+ *  用容器查詢（@container）而不是視窗寬度，側欄展開或收合時排版跟著實際可用的寬度走。 */
+const ROW_COLS = "grid-cols-[minmax(0,1fr)_6rem] gap-3 @[1000px]:grid-cols-[13rem_6rem_minmax(0,1fr)_minmax(0,1fr)] @[1000px]:gap-4"
+/** 窄的時候出裝、英雄整行；寬的時候各佔一欄 */
+const SECTION_SPAN = "col-span-2 border-t border-border/50 pt-2 @[1000px]:col-span-1 @[1000px]:border-t-0 @[1000px]:pt-0"
 
 type HexDatum = { label: string; games: number; strength: Strength | null }
 
@@ -375,10 +379,10 @@ function RoleHex({ roles, total, selected, onPick }: { roles: Judged[]; total: n
 }
 
 /** 出裝定位的判定標籤：「1 強勢 射手」，實心是看得出的、虛線框是還在誤差內 */
-function RoleChips({ items, ownWr }: { items: Judged[]; ownWr: number | null }) {
+function RoleChips({ items, ownWr, tone }: { items: Judged[]; ownWr: number | null; tone?: "pos" | "neg" }) {
   if (!items.length) return <span className="text-[11px] text-muted-foreground">—</span>
   return (
-    <span className="flex flex-wrap content-start items-start gap-1">
+    <span className={cn("flex flex-wrap content-start items-start gap-1", tone && "border-l-2 pl-2", tone === "pos" && "border-win/60", tone === "neg" && "border-loss/60")}>
       {items.map((j, n) => (
         <span
           key={j.key}
@@ -555,18 +559,20 @@ function sideOf(champs: Judged[], side: "pos" | "neg") {
 function ChampSide({
   items,
   ownWr,
+  tone,
   onMore,
   onPick,
 }: {
   items: Judged[]
   ownWr: number | null
+  tone?: "pos" | "neg"
   onMore?: () => void
   onPick?: (label: string) => void
 }) {
   if (!items.length) return <span className="text-[11px] text-muted-foreground">—</span>
   const rest = items.length - CHAMPS_SHOWN
   return (
-    <span className="flex flex-wrap items-center gap-1.5 gap-y-3">
+    <span className={cn("flex flex-wrap items-center gap-1.5 gap-y-3", tone && "border-l-2 pl-2", tone === "pos" && "border-win/60", tone === "neg" && "border-loss/60")}>
       {items.slice(0, CHAMPS_SHOWN).map((j, i) => (
         <ChampBadge key={j.key} j={j} rank={i + 1} ownWr={ownWr} onClick={onPick ? () => onPick(j.label) : undefined} />
       ))}
@@ -2325,13 +2331,13 @@ export function Crew() {
           style={{ top: headerHeight }}
           className="sticky z-10 flex flex-wrap items-center gap-x-3 gap-y-2 border-b bg-background/85 py-2 backdrop-blur"
         >
-          <TabsList>
+          <TabsList className="max-w-full justify-start overflow-x-auto">
             <TabsTrigger value="matrix">全員一覽</TabsTrigger>
             <TabsTrigger value="stats">數據總表</TabsTrigger>
             <TabsTrigger value="champ">查英雄</TabsTrigger>
             <TabsTrigger value="augment">查增幅裝置</TabsTrigger>
           </TabsList>
-          <div className="flex min-w-0 flex-1 items-center justify-end gap-2 text-xs text-muted-foreground">
+          <div className="flex w-full min-w-0 items-center justify-between gap-2 text-xs text-muted-foreground sm:w-auto sm:flex-1 sm:justify-end">
             <span className="min-w-0 truncate" data-testid="crew-scope">
               比較 {chosen.length} 人・{scopeShort}
             </span>
@@ -2355,9 +2361,9 @@ export function Crew() {
                   各出裝裡 {counts.judged} 格有 {MIN_N} 場以上，看得出強弱的有 {counts.strong + counts.weak} 格（強勢 {counts.strong}、不強勢 {counts.weak}），其餘差距都還在誤差內。
                 </p>
                 <RowLegend />
-                <div className="overflow-x-auto">
-                  <div className="min-w-[1040px]">
-                    <div className={cn("grid items-end gap-4 border-b px-2 pb-1.5 text-[11px] text-muted-foreground", ROW_COLS)}>
+                <div className="@container">
+                  <div>
+                    <div className={cn("hidden items-end border-b px-2 pb-1.5 text-[11px] text-muted-foreground @[1000px]:grid", ROW_COLS)}>
                       <span>玩家</span>
                       <span className="text-center">出裝定位</span>
                       <span className="grid grid-cols-2 gap-3">
@@ -2371,7 +2377,7 @@ export function Crew() {
                     </div>
                     <div
                       data-testid="crew-reference-row"
-                      className={cn("grid w-full items-center gap-4 border-b border-dashed bg-muted/20 px-2 py-1", ROW_COLS)}
+                      className={cn("grid w-full items-center border-b border-dashed bg-muted/20 px-2 py-1", ROW_COLS)}
                     >
                       <span className="min-w-0">
                         <span className="flex items-baseline gap-1.5 text-sm font-medium">
@@ -2409,7 +2415,7 @@ export function Crew() {
                           onClick={() => open(p.puuid, null, "overview")}
                           style={{ "--stagger": `${i * 35}ms` } as CSSProperties}
                           className={cn(
-                            "slide-in grid w-full items-center gap-4 rounded-md border-b px-2 py-1 text-left transition hover:bg-accent",
+                            "slide-in grid w-full items-center rounded-md border-b px-2 py-1 text-left transition hover:bg-accent",
                             ROW_COLS,
                             focus?.kind === "player" && focus.puuid === p.puuid && "bg-primary/10",
                           )}
@@ -2433,13 +2439,13 @@ export function Crew() {
                             </span>
                           </span>
                           <MiniHex data={prof.roles.map((j) => ({ label: j.label, games: j.games, strength: j.strength }))} total={ov.games} />
-                          <span className="grid grid-cols-2 items-center gap-3">
-                            <RoleChips items={sideOf(prof.roles, "pos")} ownWr={ownWr} />
-                            <RoleChips items={sideOf(prof.roles, "neg")} ownWr={ownWr} />
+                          <span className={cn("grid grid-cols-2 items-start gap-3", SECTION_SPAN)}>
+                            <RoleChips items={sideOf(prof.roles, "pos")} ownWr={ownWr} tone="pos" />
+                            <RoleChips items={sideOf(prof.roles, "neg")} ownWr={ownWr} tone="neg" />
                           </span>
-                          <span className="grid grid-cols-2 items-center gap-3">
-                            <ChampSide items={sideOf(prof.champs, "pos")} ownWr={ownWr} onPick={(label) => open(p.puuid, null, "picks", label)} />
-                            <ChampSide items={sideOf(prof.champs, "neg")} ownWr={ownWr} onPick={(label) => open(p.puuid, null, "picks", label)} />
+                          <span className={cn("grid grid-cols-2 items-start gap-3", SECTION_SPAN)}>
+                            <ChampSide items={sideOf(prof.champs, "pos")} ownWr={ownWr} tone="pos" onPick={(label) => open(p.puuid, null, "picks", label)} />
+                            <ChampSide items={sideOf(prof.champs, "neg")} ownWr={ownWr} tone="neg" onPick={(label) => open(p.puuid, null, "picks", label)} />
                           </span>
                         </button>
                       )
