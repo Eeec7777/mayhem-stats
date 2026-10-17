@@ -79,6 +79,20 @@ CREATE TABLE IF NOT EXISTS match_participants (
   FOREIGN KEY (platform_id, game_id) REFERENCES matches(platform_id, game_id)
 );
 
+-- 每場每隊一列：原始 JSON 的 teams 區塊（首殺、首塔、首破兵營、推塔與兵營數）。
+-- 寫入時就拆好，語意層的 team_context 才不必每次查詢都對整份 raw_json 跑 json_each（一場約 34KB）。
+CREATE TABLE IF NOT EXISTS match_teams (
+  platform_id     TEXT    NOT NULL,
+  game_id         INTEGER NOT NULL,
+  team_id         INTEGER NOT NULL,
+  first_blood     INTEGER NOT NULL,
+  first_tower     INTEGER NOT NULL,
+  first_inhibitor INTEGER NOT NULL,
+  tower_kills     INTEGER NOT NULL,
+  inhibitor_kills INTEGER NOT NULL,
+  PRIMARY KEY (platform_id, game_id, team_id)
+);
+
 CREATE TABLE IF NOT EXISTS participant_augments (
   platform_id TEXT NOT NULL, game_id INTEGER NOT NULL,
   participant_id INTEGER NOT NULL, slot INTEGER NOT NULL,
@@ -306,6 +320,7 @@ def _migrate(conn):
                 conn.execute(f"ALTER TABLE match_participants ADD COLUMN {col} INTEGER")
         _backfill_from_raw(conn, missing)
 
+    _backfill_match_teams(conn)
     backfill_eog_players(conn)
     raw_data.recover_existing(conn)
 
@@ -377,6 +392,44 @@ def _backfill_team_totals(conn):
             updates,
         )
     return len(updates)
+
+
+def team_rows(game):
+    """原始 JSON 的 teams 區塊 -> match_teams 的列（不含 platform_id、game_id）。
+    客戶端給的是布林；只有真的 true／1 才算，和原本語意層 json_extract(...) = 1 的判斷一致。"""
+    return [
+        (
+            team.get("teamId"),
+            1 if team.get("firstBlood") == 1 else 0,
+            1 if team.get("firstTower") == 1 else 0,
+            1 if team.get("firstInhibitor") == 1 else 0,
+            team.get("towerKills") or 0,
+            team.get("inhibitorKills") or 0,
+        )
+        for team in game.get("teams") or []
+        if team.get("teamId") is not None
+    ]
+
+
+def _insert_team_rows(conn, platform_id, game_id, game):
+    conn.executemany(
+        """INSERT OR IGNORE INTO match_teams
+           (platform_id, game_id, team_id, first_blood, first_tower, first_inhibitor, tower_kills, inhibitor_kills)
+           VALUES (?,?,?,?,?,?,?,?)""",
+        [(platform_id, game_id, *row) for row in team_rows(game)],
+    )
+
+
+def _backfill_match_teams(conn):
+    """替還沒有 match_teams 的舊場次從 raw_json 補上。沒有 teams 區塊的場次每次啟動都會再看一次，但只解析那幾場。"""
+    rows = conn.execute(
+        """SELECT platform_id, game_id, raw_json FROM matches m
+           WHERE NOT EXISTS (SELECT 1 FROM match_teams t WHERE t.platform_id = m.platform_id AND t.game_id = m.game_id)"""
+    ).fetchall()
+    with conn:
+        for r in rows:
+            _insert_team_rows(conn, r["platform_id"], r["game_id"], json.loads(r["raw_json"]))
+    return len(rows)
 
 
 def _backfill_from_raw(conn, columns):
@@ -478,6 +531,8 @@ def store_match(conn, game):
         )
         if cur.rowcount == 0:
             return False
+
+        _insert_team_rows(conn, platform_id, game_id, game)
 
         for p in participants:
             pid = p.get("participantId")

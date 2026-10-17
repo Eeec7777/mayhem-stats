@@ -46,11 +46,11 @@ cubes:
           m.game_version,
           m.ended_surrender,
           CASE WHEN ta.team_id = 100 THEN '藍隊' ELSE '紅隊' END AS side,
-          CASE WHEN json_extract(jt.value, '$.firstBlood') = 1 THEN 1 ELSE 0 END AS first_blood,
-          CASE WHEN json_extract(jt.value, '$.firstTower') = 1 THEN 1 ELSE 0 END AS first_tower,
-          CASE WHEN json_extract(jt.value, '$.firstInhibitor') = 1 THEN 1 ELSE 0 END AS first_inhibitor,
-          COALESCE(json_extract(jt.value, '$.towerKills'), 0) AS tower_kills,
-          COALESCE(json_extract(jt.value, '$.inhibitorKills'), 0) AS inhibitor_kills
+          COALESCE(mt.first_blood, 0) AS first_blood,
+          COALESCE(mt.first_tower, 0) AS first_tower,
+          COALESCE(mt.first_inhibitor, 0) AS first_inhibitor,
+          COALESCE(mt.tower_kills, 0) AS tower_kills,
+          COALESCE(mt.inhibitor_kills, 0) AS inhibitor_kills
         FROM team_agg ta
         JOIN team_agg e
           ON e.platform_id = ta.platform_id
@@ -58,14 +58,15 @@ cubes:
          AND e.team_id <> ta.team_id
         JOIN matches m
           ON m.platform_id = ta.platform_id AND m.game_id = ta.game_id AND m.is_remake = 0
-        LEFT JOIN json_each(m.raw_json, '$.teams') jt
-          ON json_extract(jt.value, '$.teamId') = ta.team_id
+        -- 寫入時從原始 JSON 的 teams 拆好的（db.match_teams），不在查詢時解析 raw_json
+        LEFT JOIN match_teams mt
+          ON mt.platform_id = ta.platform_id AND mt.game_id = ta.game_id AND mt.team_id = ta.team_id
       )
       SELECT * FROM team_rows
 
     description: >
       每場每隊一列的隊伍情境。team_* 是我方隊伍合計，enemy_* 是同場另一隊合計；
-      first_blood、first_tower、first_inhibitor、tower_kills、inhibitor_kills 來自原始 teams JSON。
+      first_blood、first_tower、first_inhibitor、tower_kills、inhibitor_kills 來自原始 teams JSON（入庫時拆進 match_teams）。
       透過 participants.team_context join 後，可在同一查詢裡比較個人輸出與隊伍差距。
 
     refresh_key:
