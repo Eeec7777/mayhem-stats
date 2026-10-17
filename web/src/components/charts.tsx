@@ -1,8 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import ReactECharts from "echarts-for-react"
+import ReactEChartsCore from "echarts-for-react/esm/core"
+import * as echarts from "echarts/core"
+import * as ECharts from "echarts/charts"
+import * as EComponents from "echarts/components"
+import { CanvasRenderer } from "echarts/renderers"
 import { CONTRIB_GAP } from "@/hooks/useContribution"
 import { useThemeName } from "@/lib/theme"
 import { CHART_GROW_MS, STAGGER_CAP_MS, STAGGER_MS, prefersReducedMotion, useAfterPageEnter } from "@/lib/motion"
+
+// 只註冊實際用到的圖表種類與元件。直接 import "echarts-for-react" 會連整套 ECharts 一起打包，
+// 而儀表板在主程式裡，首屏就得先下載它。新增圖表用到沒註冊的種類（例如 pie）或元件（例如 visualMap）時，
+// ECharts 不會報錯、只是那部分畫不出來——記得加在這裡。
+// 要用 esm/core：lib/core 是 CommonJS，default import 拿到的是整個模組物件，React 會丟 #130、整頁的圖都不見。
+echarts.use([
+  ECharts.BarChart, ECharts.LineChart, ECharts.HeatmapChart, ECharts.RadarChart,
+  ECharts.ScatterChart, ECharts.TreemapChart,
+  EComponents.GridComponent, EComponents.TooltipComponent, EComponents.LegendComponent,
+  EComponents.RadarComponent, EComponents.MarkLineComponent, EComponents.MarkAreaComponent,
+  EComponents.DataZoomInsideComponent, EComponents.DataZoomSliderComponent,
+  CanvasRenderer,
+])
 
 /** 交叉篩選時，沒被選中的資料淡到這個不透明度——各張圖一致，看得出「這些是背景」但仍讀得到。 */
 export const DIM_OPACITY = 0.28
@@ -81,7 +98,8 @@ function ResponsiveChart({
   return (
     // 不加淡入：座標軸先出現、資料再從軸線長出來，比整張圖一起淡入更看得出方向
     <div ref={boxRef} className="w-full">
-      <ReactECharts
+      <ReactEChartsCore
+        echarts={echarts}
         // onChartReady 是取得實例的官方途徑；改用元件 ref 拿 getEchartsInstance
         // 在這個版本拿不到東西，resize 會被 optional chaining 靜靜吞掉。
         onChartReady={(chart: EChartsInstance) => {
