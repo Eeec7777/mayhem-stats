@@ -1197,9 +1197,12 @@ export function TreemapChart({
     () => ({
       tooltip: {
         ...baseTooltip(theme),
-        formatter: (p: { name: string; value: number; data: { winrate: number | null } }) =>
-          `${p.name}<br/>${p.value} 次` +
-          (p.data.winrate === null ? "" : `<br/>勝率 ${p.data.winrate.toFixed(1)}%`),
+        // 滑到方塊之間的空隙時指到的是根節點：沒有名稱、data 也沒有 winrate（是 undefined 不是 null），不顯示提示
+        formatter: (p: { name: string; value: number; data?: { winrate?: number | null } }) =>
+          !p.name
+            ? ""
+            : `${p.name}<br/>${p.value} 次` +
+              (p.data?.winrate == null ? "" : `<br/>勝率 ${p.data.winrate.toFixed(1)}%`),
       },
       series: [
         {
