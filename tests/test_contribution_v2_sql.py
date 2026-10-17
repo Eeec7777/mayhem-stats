@@ -95,8 +95,8 @@ class V2Tests(unittest.TestCase):
         a, b = self.at(res, 1, 3), self.at(res, 2, 3)
         self.assertEqual(a["r_t"], 0)
         self.assertAlmostEqual(b["r_t"], 800 / 6800)
-        self.assertAlmostEqual(b["w_t"], 0.8 * 800 / 6800)
-        self.assertAlmostEqual(b["w_d"], 0.8 * 6000 / 6800)
+        self.assertAlmostEqual(b["w_t"], 0.7 * 800 / 6800)
+        self.assertAlmostEqual(b["w_d"], 0.9 * 6000 / 6800)
 
     def test_consumables_and_support_items(self):
         self.fx.game(1, items={1: [9], 2: [6617, 3]})
@@ -135,7 +135,17 @@ class V2Tests(unittest.TestCase):
         self.assertLessEqual(r["wave_bonus"], 2)
         self.assertLessEqual(r["objective_bonus"], 4)
         self.assertLessEqual(r["cross_role_bonus"], 10)
-        self.assertEqual(r["score_version"], "v2.0")
+        self.assertEqual(r["score_version"], "v2.1")
+
+    def test_build_mix_calibration_depends_only_on_own_items(self):
+        # 裝備組成校正只看自己的裝備比例：同一場、同樣的數字，換成承傷裝，期望分（mix_expected）跟著換、工作量的分項不變
+        self.fx.game(1)
+        self.fx.game(2, items={3: [3, 4]})
+        res = self.fx.result()
+        a, b = self.at(res, 1, 3), self.at(res, 2, 3)
+        self.assertAlmostEqual(a["mix_expected"], 39.434 * (6000 / 6000) * 0.5 + 39.811 * 0.5)  # 一件 AD、一件 AP
+        self.assertAlmostEqual(b["mix_expected"], 39.228)  # 全是承傷裝
+        self.assertAlmostEqual(a["work_score_v2"], max(0, min(100, 50 + 20 * (a["work_raw"] - a["mix_expected"]) / 6.706)), places=6)
 
 
 if __name__ == "__main__":

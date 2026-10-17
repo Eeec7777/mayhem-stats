@@ -13,15 +13,21 @@ c = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
 c.row_factory = sqlite3.Row
 
 SUP = {6617, 4005, 2530, 3504, 6621, 3107, 6616, 3222, 6620, 2065, 2526}
-DCAT = {"Damage", "CriticalStrike", "AttackSpeed", "ArmorPenetration", "LifeSteal", "OnHit", "SpellDamage", "MagicPenetration", "SpellVamp"}
+ADCAT = {"Damage", "CriticalStrike", "AttackSpeed", "ArmorPenetration", "LifeSteal", "OnHit"}
+APCAT = {"SpellDamage", "MagicPenetration", "SpellVamp"}
+DCAT = ADCAT | APCAT
 TCAT = {"Health", "Armor", "SpellBlock", "MagicResist"}
-EPS, K_EOG, K_FLAG, C0, SD0 = 0.05, 1250.0, 1100.0, 40.2, 6.8
+EPS, K_EOG, K_FLAG = 0.05, 1250.0, 1100.0
+# v2.1：模板（輸出、承傷、保人 → D, T, C, H）與裝備組成校正的係數
+TPL = ((0.9, 0, 0.1, 0), (0, 0.7, 0.3, 0), (0, 0.2, 0.2, 0.6))
+BETA = (39.434, 39.811, 39.228, 37.535, 12.399, 9.217)  # AD, AP, 承傷, 保人, AD×承傷, AP×承傷
+SD0 = 6.706
 
 cats = collections.defaultdict(set)
 for r in c.execute("SELECT item_id, category FROM dim_item_categories"):
     cats[r[0]].add(r[1])
 price = {r[0]: r[1] or 0 for r in c.execute("SELECT id, price_total FROM dim_items")}
-pts = collections.defaultdict(lambda: [0.0, 0.0, 0.0])
+pts = collections.defaultdict(lambda: [0.0, 0.0, 0.0, 0.0])  # 輸出、承傷、保人、其中的 AD
 for r in c.execute("SELECT platform_id, game_id, participant_id, item_id FROM participant_items WHERE slot < 6 AND item_id > 0"):
     iid, cs = r[3], cats.get(r[3], set())
     if iid not in price or cs & {"Consumable", "Trinket"}:
@@ -34,6 +40,9 @@ for r in c.execute("SELECT platform_id, game_id, participant_id, item_id FROM pa
     if d or t:
         p[0] += price[iid] * d / (d + t)
         p[1] += price[iid] * t / (d + t)
+        if d:
+            ad, ap = bool(cs & ADCAT), bool(cs & APCAT)
+            p[3] += price[iid] * d / (d + t) * ad / (ad + ap)
 
 eog = {(r[0], r[1]): r[2] + r[3] for r in c.execute("SELECT game_id, puuid, heal_on_teammates, shield_on_teammates FROM eog_player_stats")}
 games = collections.defaultdict(list)
@@ -49,14 +58,16 @@ for key, ps in games.items():
     use_eog = all((key[1], p["puuid"]) in eog for p in ps)
     rows = []
     for p in ps:
-        pd, pt, ph = pts.get((key[0], key[1], p["participant_id"]), [0, 0, 0])
+        pd, pt, ph, pad = pts.get((key[0], key[1], p["participant_id"]), [0, 0, 0, 0])
         tot = pd + pt + ph
         r = (1 / 3, 1 / 3, 1 / 3) if tot == 0 else (pd / tot, pt / tot, ph / tot)
-        w = (0.8 * r[0], 0.8 * r[1] + 0.2 * r[2], 0.2 * r[0] + 0.2 * r[1] + 0.3 * r[2], 0.5 * r[2])
+        fad, fap = (1 / 6, 1 / 6) if tot == 0 else (pad / tot, (pd - pad) / tot)
+        w = tuple(sum(r[j] * TPL[j][k] for j in range(3)) for k in range(4))
+        expected = sum(b * x for b, x in zip(BETA, (fad, fap, r[1], r[2], fad * r[1], fap * r[1])))
         h = eog[(key[1], p["puuid"])] / mins if use_eog else (p["total_heal"] / mins if p["units_healed"] >= 2 else 0.0)
         rows.append(dict(rid=p["rid"], w=w, x=(p["dmg_to_champions"] / mins, (p["dmg_taken"] + p["dmg_mitigated"]) / mins, p["time_ccing_others"] / mins),
                          h=h, wv=max(0, p["total_damage"] - p["dmg_to_champions"] - p["dmg_to_objectives"]) / mins, o=p["dmg_to_objectives"] / mins,
-                         win=p["win"], deaths=p["deaths"], unknown=tot == 0))
+                         win=p["win"], deaths=p["deaths"], unknown=tot == 0, expected=expected))
     ref_w = sum(q["wv"] for q in rows) / 10
     ref_o = sum(q["o"] for q in rows) / 10
     for q in rows:
@@ -72,7 +83,7 @@ for key, ps in games.items():
         cross = 10 * sum((1 - q["w"][k]) * max(0, (P[k] - 50) / 50) for k in ks) / sum(1 - q["w"][k] for k in ks)
         g = (2 * q["wv"] / (q["wv"] + ref_w) if ref_w else 0) + (4 * q["o"] / (q["o"] + ref_o) if ref_o else 0)
         raw = base + cross + g
-        mine[q["rid"]] = dict(S=min(100, max(0, 50 + 20 * (raw - C0) / SD0)), P=P, base=base, cross=cross, g=g, raw=raw,
+        mine[q["rid"]] = dict(S=min(100, max(0, 50 + 20 * (raw - q["expected"]) / SD0)), P=P, base=base, cross=cross, g=g, raw=raw,
                               status="complete" if use_eog and not q["unknown"] else "estimate", win=q["win"], deaths=q["deaths"],
                               key=key, team=None)
 

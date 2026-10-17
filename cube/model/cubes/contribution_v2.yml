@@ -3,7 +3,11 @@ cubes:
   # 規格見 docs/contribution-scoring.md 的「本場貢獻 v2」；交接原文 docs/scoring-v2-handoff.md，差距分析 analysis/scoring-v2-gap-analysis-2026-10-17.md。
   # 舊的 perf／score（contribution.yml）保留不動，當回放對照。
   #
-  # 規則版本 v2.0（2026-10-17）。改下面任何一個常數、對照表或公式，都要把 score_version 往上升，並重跑回放。
+  # 規則版本 v2.1（2026-10-17）。改下面任何一個常數、對照表或公式，都要把 score_version 往上升，並重跑回放
+  # （analysis/scoring_v2_check.py 獨立重算比對；第 7 步的係數用 analysis/scoring_v2_fit.py 重新擬合）。
+  #   v2.0 → v2.1：模板改成輸出（D .9, C .1）、承傷（T .7, C .3）、保人（T .2, C .2, H .6），並加上第 7 步的裝備組成校正。
+  #   原因：v2.0 各出裝平均差 12 分（射手 42.6、輔助 42.0、鬥士 54.4），射手、刺客的控場項只有 27／34 分卻固定占 20% 權重；
+  #   改完差 3 分以內（使用者 2026-10-17 要求調整）。
   #
   # 1. 計分範圍：queue 2400、非重開、≥ 360 秒、雙方各 5 人。其他場次留一列但分數是空值，unscored_reason 寫原因。
   # 2. 工作量（每分鐘，本場十人時長相同）：D 對英雄傷害、T 承受＋自身減免、C time_ccing_others（cc_duration 不加，避免重複）、
@@ -13,7 +17,7 @@ cubes:
   #    含小件（不像 builds.yml 有 1500 門檻）；消耗品、飾品不算；鞋子照類別（攻擊鞋算輸出、鍍板鋼蓋與水星之靴算承傷，
   #    愛歐尼亞之靴、輕靈之靴、一般鞋子沒有職責）；一件同時屬於輸出與承傷的平分；輔助裝沿用 builds.yml 的 11 件清單，全算保人。
   #    完全沒有可辨識的裝備 → 各 1/3，role_unknown = 1。增幅這一版不用（客戶端目錄沒有增幅說明），augment_status = 'not_used'。
-  # 4. 計畫權重 w = r_D ×（D .8, C .2）＋ r_T ×（T .8, C .2）＋ r_H ×（T .2, C .3, H .5）。能力表（有沒有控場、保人能力）還沒建，全部視為 unknown，不改權重。
+  # 4. 計畫權重 w = r_D ×（D .9, C .1）＋ r_T ×（T .7, C .3）＋ r_H ×（T .2, C .2, H .6）。能力表（有沒有控場、保人能力）還沒建，全部視為 unknown，不改權重。
   # 5. 各軸分項 P（0～100）：
   #    D／T／C：參考量 E = 其他九人的總量 × 自己的 (0.05 + w) ÷ 其他九人的 (0.05 + w) 總和；P = 100 × x ÷ (x + E)。
   #      和交接規格的差別：參考量不含自己。含自己時主職責的 P 上限只有 100 ÷ (1 + 自己的份額)，實測最高 66，整個量尺被壓扁（差距分析 4.1）。
@@ -25,9 +29,13 @@ cubes:
   #    跨職責加分 X = 10 × Σ (1 − w) × max(0, (P − 50) ÷ 50) ÷ Σ (1 − w)。flag 場次的 H 不進 X（含自補，鬥士的吸血會被當成保人）。
   #    推進加分 G = 2 × W ÷ (W ＋ 本場十人平均 W) ＋ 4 × O ÷ (O ＋ 本場十人平均 O)；不從主分扣。
   #    功能裝（重創、破盾）這一版只記持有（anti_heal_item／anti_shield_item），不加分：敵方需求的對照表還沒建。
-  # 7. 換成顯示的分數：raw = B + X + G，work_score_v2 = 50 + 20 × (raw − 40.2) ÷ 6.8，夾在 0～100。
-  #    40.2 與 6.8 是 v2.0 在 2026-10-17 全部 708 場的平均與標準差，**寫死成常數**：之後新增對局不會改舊分。
-  #    所以 50 是「v2.0 定版當時所有人的平均」，不是同英雄或同定位的中位數。
+  # 7. 裝備組成校正與顯示分數：raw = B + X + G。不同裝備組成在本場比較裡有結構性的高低（例如射手的控場天生少、
+  #    鬥士同時有輸出與承傷兩項），所以扣掉「這種裝備組成的平均原始分」：
+  #      expected = Σ β × f，f＝裝備點數比例（AD、AP、承傷、保人，加起來 1；職責未知時 1/6、1/6、1/3、1/3）加上 AD×承傷、AP×承傷兩個交互項，
+  #      β 是 v2.1 定版時（2026-10-17，709 場）對原始分的最小平方擬合（analysis/scoring_v2_fit.py）。
+  #    work_score_v2 = 50 + 20 × (raw − expected) ÷ SD，SD＝定版時殘差的標準差，夾在 0～100。
+  #    β 與 SD **寫死成常數**：之後新增對局不會改舊分。所以 50 是「定版當時、同樣裝備組成的人的平均」，不是同英雄的中位數；
+  #    比的仍然是同一場的工作量，校正只依這場自己的裝備，不看英雄、玩家或歷史表現。
   #
   # 限制（畫面與說明要講清楚）：這是本場相對工作量，不是操作實力；同樣的數值在不同陣容下會不同分；承傷量分不出有效開戰與無效吃傷；
   # 跨場平均只能當描述。
@@ -45,6 +53,8 @@ cubes:
               di.id IN (6617, 4005, 2530, 3504, 6621, 3107, 6616, 3222, 6620, 2065, 2526) AS is_h,
               COALESCE(MAX(c.category IN ('Damage','CriticalStrike','AttackSpeed','ArmorPenetration','LifeSteal','OnHit',
                                           'SpellDamage','MagicPenetration','SpellVamp')), 0) AS is_d,
+              COALESCE(MAX(c.category IN ('Damage','CriticalStrike','AttackSpeed','ArmorPenetration','LifeSteal','OnHit')), 0) AS is_ad,
+              COALESCE(MAX(c.category IN ('SpellDamage','MagicPenetration','SpellVamp')), 0) AS is_ap,
               COALESCE(MAX(c.category IN ('Health','Armor','SpellBlock','MagicResist')), 0) AS is_t,
               COALESCE(MAX(c.category IN ('Consumable','Trinket')), 0) AS is_cons
             FROM dim_items di LEFT JOIN dim_item_categories c ON c.item_id = di.id
@@ -55,6 +65,9 @@ cubes:
               SUM(CASE WHEN g.is_cons = 1 OR g.is_h = 1 OR g.is_d + g.is_t = 0 THEN 0 ELSE g.price * g.is_d * 1.0 / (g.is_d + g.is_t) END) AS pts_d,
               SUM(CASE WHEN g.is_cons = 1 OR g.is_h = 1 OR g.is_d + g.is_t = 0 THEN 0 ELSE g.price * g.is_t * 1.0 / (g.is_d + g.is_t) END) AS pts_t,
               SUM(CASE WHEN g.is_cons = 0 AND g.is_h = 1 THEN g.price ELSE 0 END) AS pts_h,
+              -- 輸出點數再依 AD／AP 拆開，只給第 7 步的裝備組成校正用（同時有 AD、AP 類別的平分）
+              SUM(CASE WHEN g.is_cons = 1 OR g.is_h = 1 OR g.is_d + g.is_t = 0 THEN 0
+                       ELSE g.price * g.is_d * 1.0 / (g.is_d + g.is_t) * g.is_ad / (g.is_ad + g.is_ap) END) AS pts_ad,
               -- 功能裝（只記持有）：重創＝致死宣告、荊棘之甲、刺藤胸甲、死刑宣告、黑魔禁書、遺忘寶珠、生化龐克鏈鋸之劍（含同名的其他模式版本）；
               -- 破盾＝巨蛇鋒牙。觸發條件不同（受到普攻／造成魔法傷害／造成物理傷害），這一版不判斷
               MAX(pi.item_id IN (3033, 3075, 3076, 3123, 3165, 3916, 6609, 223033, 223075, 223165, 226609, 323075, 773075, 773123, 773165)) AS anti_heal_item,
@@ -74,7 +87,7 @@ cubes:
               (e.heal_on_teammates + e.shield_on_teammates) * 60.0 / m.game_duration AS h_eog,
               CASE WHEN mp.units_healed >= 2 THEN mp.total_heal * 60.0 / m.game_duration
                    WHEN mp.units_healed IS NOT NULL THEN 0.0 END AS h_flag,
-              COALESCE(p.pts_d, 0) AS pts_d, COALESCE(p.pts_t, 0) AS pts_t, COALESCE(p.pts_h, 0) AS pts_h,
+              COALESCE(p.pts_d, 0) AS pts_d, COALESCE(p.pts_t, 0) AS pts_t, COALESCE(p.pts_h, 0) AS pts_h, COALESCE(p.pts_ad, 0) AS pts_ad,
               COALESCE(p.anti_heal_item, 0) AS anti_heal_item, COALESCE(p.anti_shield_item, 0) AS anti_shield_item
             FROM match_participants mp
             JOIN matches m ON m.platform_id = mp.platform_id AND m.game_id = mp.game_id
@@ -101,17 +114,19 @@ cubes:
               CASE WHEN role_unknown THEN 1.0 / 3 ELSE pts_d / (pts_d + pts_t + pts_h) END AS r_d,
               CASE WHEN role_unknown THEN 1.0 / 3 ELSE pts_t / (pts_d + pts_t + pts_h) END AS r_t,
               CASE WHEN role_unknown THEN 1.0 / 3 ELSE pts_h / (pts_d + pts_t + pts_h) END AS r_h,
+              CASE WHEN role_unknown THEN 1.0 / 6 ELSE pts_ad / (pts_d + pts_t + pts_h) END AS f_ad,
+              CASE WHEN role_unknown THEN 1.0 / 6 ELSE (pts_d - pts_ad) / (pts_d + pts_t + pts_h) END AS f_ap,
               CASE heal_src WHEN 'eog' THEN h_eog WHEN 'flag' THEN h_flag END AS x_h
             FROM gate WHERE unscored_reason IS NULL
           ),
           plan AS (
             SELECT *,
-              0.8 * r_d AS w_d,
-              0.8 * r_t + 0.2 * r_h AS w_t,
-              0.2 * r_d + 0.2 * r_t + 0.3 * r_h AS w_c,
-              CASE WHEN heal_src IS NOT NULL THEN 0.5 * r_h ELSE 0 END AS w_h,
-              -- H 沒有資料時（eog 與 flag 都不齊）把保人的 0.5 依比例分給其他三軸
-              CASE WHEN heal_src IS NOT NULL THEN 1.0 ELSE 1.0 - 0.5 * r_h END AS data_coverage
+              0.9 * r_d AS w_d,
+              0.7 * r_t + 0.2 * r_h AS w_t,
+              0.1 * r_d + 0.3 * r_t + 0.2 * r_h AS w_c,
+              CASE WHEN heal_src IS NOT NULL THEN 0.6 * r_h ELSE 0 END AS w_h,
+              -- H 沒有資料時（eog 與 flag 都不齊）把保人的 0.6 依比例分給其他三軸
+              CASE WHEN heal_src IS NOT NULL THEN 1.0 ELSE 1.0 - 0.6 * r_h END AS data_coverage
             FROM roles
           ),
           ref AS (
@@ -145,19 +160,21 @@ cubes:
             FROM parts
           ),
           final AS (
-            SELECT *, base_score + cross_role_bonus + COALESCE(wave_bonus, 0) + COALESCE(objective_bonus, 0) AS work_raw
+            SELECT *, base_score + cross_role_bonus + COALESCE(wave_bonus, 0) + COALESCE(objective_bonus, 0) AS work_raw,
+              -- 第 7 步：這種裝備組成的平均原始分（係數寫死，見檔頭）
+              39.434 * f_ad + 39.811 * f_ap + 39.228 * r_t + 37.535 * r_h + 12.399 * f_ad * r_t + 9.217 * f_ap * r_t AS mix_expected
             FROM scored
           )
-          SELECT g.participant_rowid, 'v2.0' AS score_version,
+          SELECT g.participant_rowid, 'v2.1' AS score_version,
             CASE WHEN g.unscored_reason IS NOT NULL THEN 'unscored'
                  WHEN f.heal_src = 'eog' AND NOT f.role_unknown AND f.w_ok AND f.o_ok THEN 'complete' ELSE 'estimate' END AS score_status,
             g.unscored_reason,
-            ROUND(MIN(100.0, MAX(0.0, 50.0 + 20.0 * (f.work_raw - 40.2) / 6.8)), 9) AS work_score_v2,
-            ROUND(f.work_raw, 9) AS work_raw, ROUND(f.base_score, 9) AS base_score, ROUND(f.cross_role_bonus, 9) AS cross_role_bonus,
+            ROUND(MIN(100.0, MAX(0.0, 50.0 + 20.0 * (f.work_raw - f.mix_expected) / 6.706)), 9) AS work_score_v2,
+            ROUND(f.work_raw, 9) AS work_raw, ROUND(f.mix_expected, 9) AS mix_expected, ROUND(f.base_score, 9) AS base_score, ROUND(f.cross_role_bonus, 9) AS cross_role_bonus,
             ROUND(f.wave_bonus, 9) AS wave_bonus, ROUND(f.objective_bonus, 9) AS objective_bonus,
             0.0 AS anti_heal_bonus, 0.0 AS anti_shield_bonus, g.anti_heal_item, g.anti_shield_item,
             f.x_d, f.x_t, f.x_c, f.x_h, f.x_w, f.x_o, g.w_raw < 0 AS w_anomaly,
-            f.p_d, f.p_t, f.p_c, f.p_h, f.r_d, f.r_t, f.r_h,
+            f.p_d, f.p_t, f.p_c, f.p_h, f.r_d, f.r_t, f.r_h, f.f_ad, f.f_ap,
             f.w_d, f.w_t, f.w_c, f.w_h, f.wn_d, f.wn_t, f.wn_c, f.wn_h, f.data_coverage, f.heal_src,
             g.role_unknown, 'not_used' AS augment_status, 'unknown' AS capability_status
           FROM gate g LEFT JOIN final f ON f.participant_rowid = g.participant_rowid
@@ -189,7 +206,7 @@ cubes:
 
       - name: score_version
         title: v2 規則版本
-        description: "本場貢獻 v2 的規則版本（例如 v2.0）。跨場比較或聚合時要同版本。"
+        description: "本場貢獻 v2 的規則版本（例如 v2.1）。跨場比較或聚合時要同版本。"
         sql: score_version
         type: string
         meta:
@@ -198,7 +215,7 @@ cubes:
     measures:
       - name: work
         title: 本場貢獻
-        description: "本場貢獻 v2（0～100）：這場可觀測的工作量（對英雄傷害、承傷、控場、治療護盾隊友，加上有上限的清兵、推塔加分），只和同一場另外九個人比；各項權重依終場裝備的連續比例（輸出／承傷／保人）決定，不用英雄名稱或歷史平均。50＝v2.0 定版時（2026-10-17）所有人的平均，不是同英雄中位數。死亡不扣分；擊殺、金錢、勝負不是輸入。沒有賽後統計的場次是暫估（score_status）。跨場平均只是描述，不代表操作實力。"
+        description: "本場貢獻 v2（0～100）：這場可觀測的工作量（對英雄傷害、承傷、控場、治療護盾隊友，加上有上限的清兵、推塔加分），只和同一場另外九個人比；各項權重依終場裝備的連續比例（輸出／承傷／保人）決定，不用英雄名稱或歷史平均。最後扣掉「同樣裝備組成的平均」（係數在 v2.1 定版時寫死），所以 50＝同樣裝備組成的人的平均，射手、坦克、輔助的平均都接近 50；不是同英雄中位數。死亡不扣分；擊殺、金錢、勝負不是輸入。沒有賽後統計的場次是暫估（score_status）。跨場平均只是描述，不代表操作實力。"
         sql: work_score_v2
         type: avg
         meta:

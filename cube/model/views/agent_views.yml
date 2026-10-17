@@ -262,7 +262,7 @@ views:
           - name: team_lineup
           - name: enemy_lineup
 
-      # 本場貢獻 v2：計分板大數字、MVP／ACE、好友比較頁用的分數（只和同一場的人比，50＝v2.0 定版時所有人的平均）
+      # 本場貢獻 v2：計分板大數字、MVP／ACE、好友比較頁用的分數（只和同一場的人比，50＝同樣裝備組成的人的平均）
       - join_path: participants.contribution_v2
         includes:
           - name: work

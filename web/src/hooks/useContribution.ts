@@ -3,7 +3,7 @@ import { num, type CubeRow } from "@/lib/cube"
 
 // 貢獻的分數，定義只有一份，在語意層（規格見 docs/contribution-scoring.md）；畫法在 components/Contribution.tsx：
 //   本場貢獻（contribution_v2.work，cube/model/cubes/contribution_v2.yml）：這場可觀測的工作量，只和同一場另外九個人比，
-//     權重依終場裝備的連續比例；50＝v2.0 定版時所有人的平均。2026-10-17 起計分板大數字、對局卡片、MVP／ACE、好友比較頁都用它。
+//     權重依終場裝備的連續比例；最後扣掉同樣裝備組成的平均（v2.1），50＝所有人的平均。2026-10-17 起計分板大數字、對局卡片、MVP／ACE、好友比較頁都用它。
 //   表現（perf，contribution.yml）：舊的當局表現分，和同類型、同時長帶的歷史人次比。英雄頁、好友比較頁的「打法」還在用，也留作回放對照。
 //   隊內（score）：在隊裡扛的份量，占全隊的比例，份額零和所以各隊平均都在 50 附近。計分板小字用它。
 
@@ -53,7 +53,7 @@ export const WORK_PARTS = [
 ] as const
 export const WORK_MEASURES = [WORK, ...WORK_PARTS.map((c) => c.key), "contribution_v2.base", "contribution_v2.cross_role", "contribution_v2.progress"]
 
-/** 本場貢獻 v2（0～100，50＝v2.0 定版時所有人的平均） */
+/** 本場貢獻 v2（0～100，50＝所有人的平均；各種裝備組成的平均也都接近 50） */
 export const workScore = (r: CubeRow | undefined) => (r ? num(r[WORK]) : null)
 /** 這一列的本場貢獻是不是暫估（沒有賽後統計的治療護盾隊友量） */
 export const isEstimate = (r: CubeRow | undefined) => r?.[WORK_STATUS] === "estimate"
