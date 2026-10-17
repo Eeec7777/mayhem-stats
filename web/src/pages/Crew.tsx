@@ -2331,7 +2331,7 @@ export function Crew() {
           style={{ top: headerHeight }}
           className="sticky z-10 flex flex-wrap items-center gap-x-3 gap-y-2 border-b bg-background/85 py-2 backdrop-blur"
         >
-          <TabsList className="max-w-full justify-start overflow-x-auto">
+          <TabsList className="h-auto max-w-full flex-wrap justify-start">
             <TabsTrigger value="matrix">全員一覽</TabsTrigger>
             <TabsTrigger value="stats">數據總表</TabsTrigger>
             <TabsTrigger value="champ">查英雄</TabsTrigger>
