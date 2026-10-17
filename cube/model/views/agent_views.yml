@@ -262,6 +262,36 @@ views:
           - name: team_lineup
           - name: enemy_lineup
 
+      # 本場貢獻 v2：計分板大數字、MVP／ACE、好友比較頁用的分數（只和同一場的人比，50＝v2.0 定版時所有人的平均）
+      - join_path: participants.contribution_v2
+        includes:
+          - name: work
+            alias: work_score
+          - name: scored_games
+            alias: work_scored_games
+          - name: estimate_games
+            alias: work_estimate_games
+          - name: part_dmg
+            alias: work_damage
+          - name: part_soak
+            alias: work_soak
+          - name: part_cc
+            alias: work_cc
+          - name: part_heal
+            alias: work_heal
+          - name: base
+            alias: work_base
+          - name: cross_role
+            alias: work_cross_role_bonus
+          - name: progress
+            alias: work_progress_bonus
+          - name: anti_heal_share
+            alias: anti_heal_item_share
+          - name: score_status
+            alias: work_score_status
+          - name: score_version
+            alias: work_score_version
+
       - join_path: participants.contribution
         includes:
           # perf＝當局表現分（這場打得有多好，全隊都打得好可以全隊都高）；score 與 *_pct＝隊內排名（誰在隊裡扛得多）

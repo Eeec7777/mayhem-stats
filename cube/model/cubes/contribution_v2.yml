@@ -1,0 +1,300 @@
+cubes:
+  # 本場貢獻 v2（work_score_v2）：這場可觀測的工作，只和「同一場的另外九個人」比，不用任何跨場的英雄、玩家或定位基準。
+  # 規格見 docs/contribution-scoring.md 的「本場貢獻 v2」；交接原文 docs/scoring-v2-handoff.md，差距分析 analysis/scoring-v2-gap-analysis-2026-10-17.md。
+  # 舊的 perf／score（contribution.yml）保留不動，當回放對照。
+  #
+  # 規則版本 v2.0（2026-10-17）。改下面任何一個常數、對照表或公式，都要把 score_version 往上升，並重跑回放。
+  #
+  # 1. 計分範圍：queue 2400、非重開、≥ 360 秒、雙方各 5 人。其他場次留一列但分數是空值，unscored_reason 寫原因。
+  # 2. 工作量（每分鐘，本場十人時長相同）：D 對英雄傷害、T 承受＋自身減免、C time_ccing_others（cc_duration 不加，避免重複）、
+  #    H 治療＋護盾隊友、W 清兵代理＝max(0, 總輸出 − D − O)、O 對建築傷害（大亂鬥沒有野怪，和 damageDealtToTurrets 逐筆相同）。
+  #    死亡不扣分、不當分母（使用者決定，2026-10-17）。擊殺、KDA、金錢、勝負都不是輸入。
+  # 3. 職責比例 r（輸出／承傷／保人，加起來 1）：只看終場 slot 0–5 的裝備，用總價當點數，連續比例、沒有門檻。
+  #    含小件（不像 builds.yml 有 1500 門檻）；消耗品、飾品不算；鞋子照類別（攻擊鞋算輸出、鍍板鋼蓋與水星之靴算承傷，
+  #    愛歐尼亞之靴、輕靈之靴、一般鞋子沒有職責）；一件同時屬於輸出與承傷的平分；輔助裝沿用 builds.yml 的 11 件清單，全算保人。
+  #    完全沒有可辨識的裝備 → 各 1/3，role_unknown = 1。增幅這一版不用（客戶端目錄沒有增幅說明），augment_status = 'not_used'。
+  # 4. 計畫權重 w = r_D ×（D .8, C .2）＋ r_T ×（T .8, C .2）＋ r_H ×（T .2, C .3, H .5）。能力表（有沒有控場、保人能力）還沒建，全部視為 unknown，不改權重。
+  # 5. 各軸分項 P（0～100）：
+  #    D／T／C：參考量 E = 其他九人的總量 × 自己的 (0.05 + w) ÷ 其他九人的 (0.05 + w) 總和；P = 100 × x ÷ (x + E)。
+  #      和交接規格的差別：參考量不含自己。含自己時主職責的 P 上限只有 100 ÷ (1 + 自己的份額)，實測最高 66，整個量尺被壓扁（差距分析 4.1）。
+  #      x = 0 → 0；其他九人都是 0 而自己 > 0 → 100。
+  #    H：不和同場比（同場常只有一個人補血，相對分會變成量多量少同分，差距分析 4.3），改成固定換算 P = 100 × h ÷ (h + K)。
+  #      有賽後統計（十人都有）的場次 h＝每分鐘治療＋護盾隊友，K＝1250（2026-10-17 輔助配置的中位數）；
+  #      沒有的場次退回舊算法：units_healed ≥ 2 的人用每分鐘 total_heal（含自補），其他人 0，K＝1100。heal_src 標 eog／flag，flag 的場次分數是暫估。
+  # 6. 主分 B = 80 × Σ w × P ÷ 100。
+  #    跨職責加分 X = 10 × Σ (1 − w) × max(0, (P − 50) ÷ 50) ÷ Σ (1 − w)。flag 場次的 H 不進 X（含自補，鬥士的吸血會被當成保人）。
+  #    推進加分 G = 2 × W ÷ (W ＋ 本場十人平均 W) ＋ 4 × O ÷ (O ＋ 本場十人平均 O)；不從主分扣。
+  #    功能裝（重創、破盾）這一版只記持有（anti_heal_item／anti_shield_item），不加分：敵方需求的對照表還沒建。
+  # 7. 換成顯示的分數：raw = B + X + G，work_score_v2 = 50 + 20 × (raw − 40.2) ÷ 6.8，夾在 0～100。
+  #    40.2 與 6.8 是 v2.0 在 2026-10-17 全部 708 場的平均與標準差，**寫死成常數**：之後新增對局不會改舊分。
+  #    所以 50 是「v2.0 定版當時所有人的平均」，不是同英雄或同定位的中位數。
+  #
+  # 限制（畫面與說明要講清楚）：這是本場相對工作量，不是操作實力；同樣的數值在不同陣容下會不同分；承傷量分不出有效開戰與無效吃傷；
+  # 跨場平均只能當描述。
+  - name: contribution_v2
+    title: 本場貢獻 v2
+    # 規則本體在 meta.materialize.sql，每次入庫後由 features.py 重建 mat_contribution_v2。改完重啟服務或 `uv run features.py`。
+    # 用 | 而不是 >：SQL 裡有 -- 註解。
+    sql_table: mat_contribution_v2
+    meta:
+      materialize:
+        table: mat_contribution_v2
+        sql: |
+          WITH item_cls AS (
+            SELECT di.id AS item_id, COALESCE(di.price_total, 0) AS price,
+              di.id IN (6617, 4005, 2530, 3504, 6621, 3107, 6616, 3222, 6620, 2065, 2526) AS is_h,
+              COALESCE(MAX(c.category IN ('Damage','CriticalStrike','AttackSpeed','ArmorPenetration','LifeSteal','OnHit',
+                                          'SpellDamage','MagicPenetration','SpellVamp')), 0) AS is_d,
+              COALESCE(MAX(c.category IN ('Health','Armor','SpellBlock','MagicResist')), 0) AS is_t,
+              COALESCE(MAX(c.category IN ('Consumable','Trinket')), 0) AS is_cons
+            FROM dim_items di LEFT JOIN dim_item_categories c ON c.item_id = di.id
+            GROUP BY di.id
+          ),
+          item_pts AS (
+            SELECT pi.platform_id, pi.game_id, pi.participant_id,
+              SUM(CASE WHEN g.is_cons = 1 OR g.is_h = 1 OR g.is_d + g.is_t = 0 THEN 0 ELSE g.price * g.is_d * 1.0 / (g.is_d + g.is_t) END) AS pts_d,
+              SUM(CASE WHEN g.is_cons = 1 OR g.is_h = 1 OR g.is_d + g.is_t = 0 THEN 0 ELSE g.price * g.is_t * 1.0 / (g.is_d + g.is_t) END) AS pts_t,
+              SUM(CASE WHEN g.is_cons = 0 AND g.is_h = 1 THEN g.price ELSE 0 END) AS pts_h,
+              -- 功能裝（只記持有）：重創＝致死宣告、荊棘之甲、刺藤胸甲、死刑宣告、黑魔禁書、遺忘寶珠、生化龐克鏈鋸之劍（含同名的其他模式版本）；
+              -- 破盾＝巨蛇鋒牙。觸發條件不同（受到普攻／造成魔法傷害／造成物理傷害），這一版不判斷
+              MAX(pi.item_id IN (3033, 3075, 3076, 3123, 3165, 3916, 6609, 223033, 223075, 223165, 226609, 323075, 773075, 773123, 773165)) AS anti_heal_item,
+              MAX(pi.item_id IN (6695, 226695)) AS anti_shield_item
+            FROM participant_items pi JOIN item_cls g ON g.item_id = pi.item_id
+            WHERE pi.slot < 6 AND pi.item_id > 0
+            GROUP BY 1, 2, 3
+          ),
+          base AS (
+            SELECT mp.rowid AS participant_rowid, mp.platform_id, mp.game_id, mp.team_id, m.queue_id, m.is_remake, m.game_duration,
+              mp.dmg_to_champions * 60.0 / m.game_duration AS x_d,
+              (mp.dmg_taken + mp.dmg_mitigated) * 60.0 / m.game_duration AS x_t,
+              mp.time_ccing_others * 60.0 / m.game_duration AS x_c,
+              mp.total_damage - mp.dmg_to_champions - mp.dmg_to_objectives AS w_raw,
+              MAX(0, mp.total_damage - mp.dmg_to_champions - mp.dmg_to_objectives) * 60.0 / m.game_duration AS x_w,
+              mp.dmg_to_objectives * 60.0 / m.game_duration AS x_o,
+              (e.heal_on_teammates + e.shield_on_teammates) * 60.0 / m.game_duration AS h_eog,
+              CASE WHEN mp.units_healed >= 2 THEN mp.total_heal * 60.0 / m.game_duration
+                   WHEN mp.units_healed IS NOT NULL THEN 0.0 END AS h_flag,
+              COALESCE(p.pts_d, 0) AS pts_d, COALESCE(p.pts_t, 0) AS pts_t, COALESCE(p.pts_h, 0) AS pts_h,
+              COALESCE(p.anti_heal_item, 0) AS anti_heal_item, COALESCE(p.anti_shield_item, 0) AS anti_shield_item
+            FROM match_participants mp
+            JOIN matches m ON m.platform_id = mp.platform_id AND m.game_id = mp.game_id
+            LEFT JOIN item_pts p ON p.platform_id = mp.platform_id AND p.game_id = mp.game_id AND p.participant_id = mp.participant_id
+            LEFT JOIN eog_player_stats e ON e.game_id = mp.game_id AND e.puuid = mp.puuid
+          ),
+          gate AS (
+            SELECT *,
+              CASE WHEN queue_id <> 2400 THEN 'other_queue'
+                   WHEN is_remake = 1 OR game_duration < 360 THEN 'remake_or_short_game'
+                   WHEN COUNT(*) OVER g <> 10 OR SUM(team_id = 100) OVER g <> 5 THEN 'incomplete_5v5'
+                   WHEN COUNT(x_d) OVER g < 10 OR COUNT(x_t) OVER g < 10 OR COUNT(x_c) OVER g < 10 THEN 'missing_main_axis'
+              END AS unscored_reason,
+              -- 本場十人都有賽後統計才用 eog，否則整場退回 flag（不混用：缺的人不能當 0）
+              CASE WHEN COUNT(h_eog) OVER g = 10 THEN 'eog' WHEN COUNT(h_flag) OVER g = 10 THEN 'flag' END AS heal_src,
+              -- W、O 有人缺就整場不算該項加分（不把殘缺的總和當十人）
+              COUNT(x_w) OVER g = 10 AS w_ok, COUNT(x_o) OVER g = 10 AS o_ok,
+              pts_d + pts_t + pts_h = 0 AS role_unknown
+            FROM base
+            WINDOW g AS (PARTITION BY platform_id, game_id)
+          ),
+          roles AS (
+            SELECT *,
+              CASE WHEN role_unknown THEN 1.0 / 3 ELSE pts_d / (pts_d + pts_t + pts_h) END AS r_d,
+              CASE WHEN role_unknown THEN 1.0 / 3 ELSE pts_t / (pts_d + pts_t + pts_h) END AS r_t,
+              CASE WHEN role_unknown THEN 1.0 / 3 ELSE pts_h / (pts_d + pts_t + pts_h) END AS r_h,
+              CASE heal_src WHEN 'eog' THEN h_eog WHEN 'flag' THEN h_flag END AS x_h
+            FROM gate WHERE unscored_reason IS NULL
+          ),
+          plan AS (
+            SELECT *,
+              0.8 * r_d AS w_d,
+              0.8 * r_t + 0.2 * r_h AS w_t,
+              0.2 * r_d + 0.2 * r_t + 0.3 * r_h AS w_c,
+              CASE WHEN heal_src IS NOT NULL THEN 0.5 * r_h ELSE 0 END AS w_h,
+              -- H 沒有資料時（eog 與 flag 都不齊）把保人的 0.5 依比例分給其他三軸
+              CASE WHEN heal_src IS NOT NULL THEN 1.0 ELSE 1.0 - 0.5 * r_h END AS data_coverage
+            FROM roles
+          ),
+          ref AS (
+            -- 參考量用其他九人：自己的 (0.05 + w) 占其他九人 (0.05 + w) 總和的比例 × 其他九人的總量
+            SELECT *,
+              (SUM(x_d) OVER g - x_d) * (0.05 + w_d / data_coverage) / (SUM(0.05 + w_d / data_coverage) OVER g - (0.05 + w_d / data_coverage)) AS e_d,
+              (SUM(x_t) OVER g - x_t) * (0.05 + w_t / data_coverage) / (SUM(0.05 + w_t / data_coverage) OVER g - (0.05 + w_t / data_coverage)) AS e_t,
+              (SUM(x_c) OVER g - x_c) * (0.05 + w_c / data_coverage) / (SUM(0.05 + w_c / data_coverage) OVER g - (0.05 + w_c / data_coverage)) AS e_c,
+              AVG(x_w) OVER g AS ref_w, AVG(x_o) OVER g AS ref_o
+            FROM plan
+            WINDOW g AS (PARTITION BY platform_id, game_id)
+          ),
+          parts AS (
+            SELECT *,
+              w_d / data_coverage AS wn_d, w_t / data_coverage AS wn_t, w_c / data_coverage AS wn_c, w_h / data_coverage AS wn_h,
+              CASE WHEN x_d = 0 THEN 0.0 WHEN e_d = 0 THEN 100.0 ELSE 100.0 * x_d / (x_d + e_d) END AS p_d,
+              CASE WHEN x_t = 0 THEN 0.0 WHEN e_t = 0 THEN 100.0 ELSE 100.0 * x_t / (x_t + e_t) END AS p_t,
+              CASE WHEN x_c = 0 THEN 0.0 WHEN e_c = 0 THEN 100.0 ELSE 100.0 * x_c / (x_c + e_c) END AS p_c,
+              CASE heal_src WHEN 'eog' THEN 100.0 * x_h / (x_h + 1250) WHEN 'flag' THEN 100.0 * x_h / (x_h + 1100) END AS p_h,
+              CASE WHEN NOT w_ok THEN NULL WHEN ref_w = 0 THEN 0.0 ELSE 2.0 * x_w / (x_w + ref_w) END AS wave_bonus,
+              CASE WHEN NOT o_ok THEN NULL WHEN ref_o = 0 THEN 0.0 ELSE 4.0 * x_o / (x_o + ref_o) END AS objective_bonus
+            FROM ref
+          ),
+          scored AS (
+            SELECT *,
+              80.0 * (wn_d * p_d + wn_t * p_t + wn_c * p_c + COALESCE(wn_h * p_h, 0)) / 100 AS base_score,
+              -- 跨職責：flag 場次的 H 含自補，不進來
+              10.0 * ((1 - wn_d) * MAX(0, (p_d - 50) / 50) + (1 - wn_t) * MAX(0, (p_t - 50) / 50) + (1 - wn_c) * MAX(0, (p_c - 50) / 50)
+                      + CASE WHEN heal_src = 'eog' THEN (1 - wn_h) * MAX(0, (p_h - 50) / 50) ELSE 0 END)
+                / ((1 - wn_d) + (1 - wn_t) + (1 - wn_c) + CASE WHEN heal_src = 'eog' THEN 1 - wn_h ELSE 0 END) AS cross_role_bonus
+            FROM parts
+          ),
+          final AS (
+            SELECT *, base_score + cross_role_bonus + COALESCE(wave_bonus, 0) + COALESCE(objective_bonus, 0) AS work_raw
+            FROM scored
+          )
+          SELECT g.participant_rowid, 'v2.0' AS score_version,
+            CASE WHEN g.unscored_reason IS NOT NULL THEN 'unscored'
+                 WHEN f.heal_src = 'eog' AND NOT f.role_unknown AND f.w_ok AND f.o_ok THEN 'complete' ELSE 'estimate' END AS score_status,
+            g.unscored_reason,
+            ROUND(MIN(100.0, MAX(0.0, 50.0 + 20.0 * (f.work_raw - 40.2) / 6.8)), 9) AS work_score_v2,
+            ROUND(f.work_raw, 9) AS work_raw, ROUND(f.base_score, 9) AS base_score, ROUND(f.cross_role_bonus, 9) AS cross_role_bonus,
+            ROUND(f.wave_bonus, 9) AS wave_bonus, ROUND(f.objective_bonus, 9) AS objective_bonus,
+            0.0 AS anti_heal_bonus, 0.0 AS anti_shield_bonus, g.anti_heal_item, g.anti_shield_item,
+            f.x_d, f.x_t, f.x_c, f.x_h, f.x_w, f.x_o, g.w_raw < 0 AS w_anomaly,
+            f.p_d, f.p_t, f.p_c, f.p_h, f.r_d, f.r_t, f.r_h,
+            f.w_d, f.w_t, f.w_c, f.w_h, f.wn_d, f.wn_t, f.wn_c, f.wn_h, f.data_coverage, f.heal_src,
+            g.role_unknown, 'not_used' AS augment_status, 'unknown' AS capability_status
+          FROM gate g LEFT JOIN final f ON f.participant_rowid = g.participant_rowid
+
+    # 與 participants.yml 相同的 refresh key，理由寫在那裡。SQL 必須一字不差才會被合併。
+    refresh_key:
+      sql: >
+        SELECT (SELECT COALESCE(MAX(ingested_at), 0) FROM matches) || ':' || (SELECT COUNT(*) FROM dim_augments) || ':' || (SELECT group_concat(puuid || is_me || tracked) FROM accounts) || ':' || (SELECT COALESCE(MAX(version), 0) FROM mat_state)
+
+    joins:
+      - name: participants
+        sql: "{CUBE}.participant_rowid = {participants}.rowid"
+        relationship: one_to_one
+
+    dimensions:
+      - name: id
+        sql: participant_rowid
+        type: number
+        primary_key: true
+        public: false
+
+      - name: score_status
+        title: v2 完整度
+        description: "本場貢獻 v2 的資料完整度：complete（十人都有賽後統計的治療護盾隊友量、裝備可辨識）、estimate（暫估：多半是沒有賽後統計，保人改用含自補的治療量）、unscored（不計分：重開、不足 6 分鐘、非大亂鬥或不是完整 5v5）。"
+        sql: score_status
+        type: string
+        meta:
+          group: 貢獻
+
+      - name: score_version
+        title: v2 規則版本
+        description: "本場貢獻 v2 的規則版本（例如 v2.0）。跨場比較或聚合時要同版本。"
+        sql: score_version
+        type: string
+        meta:
+          group: 貢獻
+
+    measures:
+      - name: work
+        title: 本場貢獻
+        description: "本場貢獻 v2（0～100）：這場可觀測的工作量（對英雄傷害、承傷、控場、治療護盾隊友，加上有上限的清兵、推塔加分），只和同一場另外九個人比；各項權重依終場裝備的連續比例（輸出／承傷／保人）決定，不用英雄名稱或歷史平均。50＝v2.0 定版時（2026-10-17）所有人的平均，不是同英雄中位數。死亡不扣分；擊殺、金錢、勝負不是輸入。沒有賽後統計的場次是暫估（score_status）。跨場平均只是描述，不代表操作實力。"
+        sql: work_score_v2
+        type: avg
+        meta:
+          group: 貢獻
+          decimals: 0
+          higherIsBetter: true
+
+      - name: scored_games
+        title: 有本場貢獻的場次
+        description: "有本場貢獻 v2 分數的場數（重開、不足 6 分鐘、不完整的對局沒有分數）。算平均的誤差範圍時，樣本數用這個。"
+        sql: "CASE WHEN {CUBE}.work_score_v2 IS NOT NULL THEN {CUBE}.participant_rowid END"
+        type: count_distinct
+        meta:
+          group: 貢獻
+
+      - name: estimate_games
+        title: 暫估的場次
+        description: "本場貢獻 v2 是暫估（score_status = estimate，多半是沒有賽後統計）的場數。"
+        sql: "CASE WHEN {CUBE}.score_status = 'estimate' THEN {CUBE}.participant_rowid END"
+        type: count_distinct
+        meta:
+          group: 貢獻
+
+      - name: part_dmg
+        title: 本場・輸出
+        description: "每分鐘對英雄傷害和本場參考量比（參考量＝其他九人的量依裝備職責分到自己的份）：0～100，等於參考量是 50、兩倍約 67。"
+        sql: p_d
+        type: avg
+        meta:
+          group: 貢獻
+          decimals: 0
+          higherIsBetter: true
+
+      - name: part_soak
+        title: 本場・承傷
+        description: "每分鐘承受＋自身減免的傷害和本場參考量比（同輸出）。只是承傷量，分不出有效開戰或無效吃傷。"
+        sql: p_t
+        type: avg
+        meta:
+          group: 貢獻
+          decimals: 0
+          higherIsBetter: true
+
+      - name: part_cc
+        title: 本場・控場
+        description: "每分鐘控制敵人的時間（time_ccing_others）和本場參考量比（同輸出）。"
+        sql: p_c
+        type: avg
+        meta:
+          group: 貢獻
+          decimals: 0
+          higherIsBetter: true
+
+      - name: part_heal
+        title: 本場・治療護盾
+        description: "每分鐘治療＋護盾隊友換成 0～100（固定換算：每分鐘 1250 是 50）。沒有賽後統計的場次改用含自補的治療量（每分鐘 1100 是 50），只算偵測到有治療隊友的人。"
+        sql: p_h
+        type: avg
+        meta:
+          group: 貢獻
+          decimals: 0
+          higherIsBetter: true
+
+      - name: base
+        title: 本場・主分
+        description: "主分（0～80）：四項分數依裝備職責的權重加總後乘 80。"
+        sql: base_score
+        type: avg
+        meta:
+          group: 貢獻
+          decimals: 1
+
+      - name: cross_role
+        title: 本場・跨職責加分
+        description: "跨職責加分（0～10）：權重低的工作做到超過參考量時的額外分，例如輸出裝的人扛了很多傷害。"
+        sql: cross_role_bonus
+        type: avg
+        meta:
+          group: 貢獻
+          decimals: 1
+
+      - name: progress
+        title: 本場・推進加分
+        description: "清兵（最多 2）＋推塔（最多 4）加分，參考量是本場十人平均。不提供不扣分。"
+        sql: "COALESCE({CUBE}.wave_bonus, 0) + COALESCE({CUBE}.objective_bonus, 0)"
+        type: avg
+        meta:
+          group: 貢獻
+          decimals: 1
+
+      - name: anti_heal_share
+        title: 帶重創裝的比例
+        description: "終場持有重創裝（致死宣告、荊棘之甲、刺藤胸甲、死刑宣告、黑魔禁書、遺忘寶珠、生化龐克鏈鋸之劍）的場次比例（%）。只是持有，不代表實際命中或減療量，也不加分。"
+        sql: "{CUBE}.anti_heal_item * 100.0"
+        type: avg
+        meta:
+          group: 貢獻
+          unit: "%"
+          decimals: 0

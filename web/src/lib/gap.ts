@@ -82,6 +82,8 @@ export const STRENGTH_CLASS: Record<Strength, string> = {
 export const CONTRIB_SD = 27
 /** 當局表現分（contribution.perf）同一個人單場的標準差：2026-10-10 實測（12 位 30 場以上的玩家合併）19.0 */
 export const PERF_SD = 19
+/** 本場貢獻 v2（contribution_v2.work）同一個人單場的標準差：2026-10-17 實測（12 位 30 場以上的玩家合併）18.5。好友比較頁的判斷用它 */
+export const WORK_SD = 18.5
 
 export type ScoreGap = { mean: number; diff: number; interval: [number, number] | null; clear: boolean }
 

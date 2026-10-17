@@ -15,7 +15,7 @@ import { CubeMatchList, MatchList } from "@/components/MatchList"
 import { RoleChip, RoleLegend } from "@/components/RoleChip"
 import { ContribRadarChart } from "@/components/charts"
 import { ContribBars, ContribInline, ContribMeter, ContribTagBadge } from "@/components/Contribution"
-import { CONTRIB_PARTS, PERF_GAP, PERF_PARTS, contribScore, contribTagOf, perfScore, useCardContribution, useContribution, type ContribTag } from "@/hooks/useContribution"
+import { CONTRIB_PARTS, PERF_PARTS, WORK, WORK_GAP, WORK_PARTS, contribScore, contribTagOf, isEstimate, useCardContribution, useContribution, workScore, type ContribTag } from "@/hooks/useContribution"
 import { participantKey, useBuildRoles } from "@/hooks/useBuildRoles"
 import { cn } from "@/lib/utils"
 
@@ -204,8 +204,8 @@ function Scoreboard({
       if (!next.delete(id)) next.add(id)
       return next
     })
-  // 大數字、MVP／ACE 看當局表現分；小字是隊內排名（在隊裡扛的份量）
-  const scoreOf = (p: Player) => perfScore(contrib.get(keyOf(p)))
+  // 大數字、MVP／ACE 看本場貢獻（v2，只和同一場的人比）；小字是隊內排名（在隊裡扛的份量）
+  const scoreOf = (p: Player) => workScore(contrib.get(keyOf(p)))
   const rankOf = (p: Player) => contribScore(contrib.get(keyOf(p)))
   const teams = [100, 200].map((teamId) => {
     const members = players.filter((p) => p.team_id === teamId)
@@ -285,26 +285,28 @@ function Scoreboard({
                   {p.gold_earned.toLocaleString()}
                 </div>
 
-                <ContribMeter score={score} rank={rankOf(p)} tag={tag} expanded={open.has(p.participant_id)} onToggle={() => toggle(p.participant_id)} />
+                <ContribMeter score={score} rank={rankOf(p)} tag={tag} estimate={isEstimate(contrib.get(keyOf(p)))} expanded={open.has(p.participant_id)} onToggle={() => toggle(p.participant_id)} />
 
                 {open.has(p.participant_id) && (
                   // 雷達看形狀、橫條看確切數字；窄了雷達在上、橫條在下
                   <div className="reveal flex w-full basis-full flex-wrap items-center gap-x-6 gap-y-2 rounded-md bg-secondary/30 px-3 py-2">
                     <div className="w-[260px] shrink-0">
                       <ContribRadarChart
-                        data={PERF_PARTS.map((c) => {
+                        data={WORK_PARTS.map((c) => {
                           const row = contrib.get(keyOf(p))
                           return { label: c.label, hint: c.hint, value: row ? num(row[c.key]) : null }
                         })}
-                        gap={PERF_GAP}
+                        gap={WORK_GAP}
                         height={220}
                       />
                     </div>
                     <div className="min-w-[260px] flex-1 space-y-1.5">
                       <div className="text-[11px] text-muted-foreground">
-                        當局表現：每分鐘的實際數值，和同類型、同時長帶的人比（50＝中位數）。隊內 {rankOf(p) === null ? "—" : Math.round(rankOf(p)!)} 是你在隊裡扛的份量。
+                        本場貢獻：每分鐘的輸出、承傷、控場、治療護盾，和同一場另外九個人比（權重依終場裝備；50＝剛好等於參考量），另有清兵、推塔的小幅加分。
+                        {isEstimate(contrib.get(keyOf(p))) && " *暫估：這場沒有賽後統計，治療護盾改用含自補的治療量。"}
+                        隊內 {rankOf(p) === null ? "—" : Math.round(rankOf(p)!)} 是你在隊裡扛的份量。
                       </div>
-                      <ContribBars row={contrib.get(keyOf(p))} kind="perf" className="grid gap-x-8 gap-y-1.5 sm:grid-cols-2" />
+                      <ContribBars row={contrib.get(keyOf(p))} kind="work" className="grid gap-x-8 gap-y-1.5 sm:grid-cols-2" />
                     </div>
                   </div>
                 )}
@@ -373,7 +375,7 @@ const STAT_SECTIONS: { title: string; rows: StatRow[] }[] = [
 ]
 
 function StatTable({ players, roleOf, contrib }: { players: Player[]; roleOf: Map<string, string>; contrib: Map<string, CubeRow> }) {
-  // 表現與隊內貢獻都是百分位（50＝中位數），不是這場的原始數字；缺值（重開局、沒有治療隊友的治療軸）給 -1，畫成「—」且不會被標成最高
+  // 本場貢獻、表現與隊內貢獻都是 0～100 的分數，不是這場的原始數字；缺值（重開局、沒有治療隊友的治療軸）給 -1，畫成「—」且不會被標成最高
   const pct = (key: string) => (p: Player) => {
     const r = contrib.get(keyOf(p))
     return (r ? num(r[key]) : null) ?? -1
@@ -382,9 +384,16 @@ function StatTable({ players, roleOf, contrib }: { players: Player[]; roleOf: Ma
   const sections = [
     ...STAT_SECTIONS,
     {
-      title: "當局表現（每分鐘實際數值，和同類型、同時長帶的人比，50＝中位數）",
+      title: "本場貢獻（和同一場另外九個人比；各項 50＝剛好等於本場參考量）",
       rows: [
-        { label: "當局表現分", get: pct("contribution.perf"), fmt: fmtPct },
+        { label: "本場貢獻", get: pct(WORK), fmt: fmtPct },
+        ...WORK_PARTS.map((c) => ({ label: c.label, get: pct(c.key), fmt: fmtPct })),
+      ] as StatRow[],
+    },
+    {
+      title: "舊的當局表現（每分鐘實際數值，和同類型、同時長帶的人比，50＝中位數）",
+      rows: [
+        { label: "舊表現分", get: pct("contribution.perf"), fmt: fmtPct },
         ...PERF_PARTS.map((c) => ({ label: c.label, get: pct(c.key), fmt: fmtPct })),
       ] as StatRow[],
     },
@@ -542,12 +551,11 @@ export function MatchDetail({
           </div>
           <Scoreboard players={players} roleOf={roleOf} contrib={contrib} />
           <p className="mt-2 text-xs text-muted-foreground">
-            大數字是「當局表現分」（0～100，50＝同類型、同時長帶的中位數）：這場每分鐘的輸出、承傷、存活（死得少）、參團、控場，
-            有治療或護盾隊友時再加治療護盾，各自和「同類型」（出裝定位 × 英雄官方主定位）、同時長的所有人比百分位，再依出裝定位加權（輸出型不看承傷）。
-            全隊都打得好，全隊都可以高於 50，所以分數會和勝負相關。小字「隊內」是你在隊裡扛的份量（占全隊的比例，和同類型的人排名），
-            份額加起來一定是 100%，所以各隊平均都在 50 附近。橫條以 50 為中線，往右比中位數高、往左較低。
-            擊殺與金錢不算分；治療與護盾隊友的量只有開始擷取賽後統計之後的場次才有，舊場次的護盾只做到不扣分；
-            6 分鐘內的重開局不計分。MVP＝贏的一隊表現最高、ACE＝輸的一隊表現最高；點一列看六項明細。
+            大數字是「本場貢獻」（0～100，50＝所有人的平均）：這場每分鐘的輸出、承傷、控場、治療護盾隊友，各自和同一場另外九個人比，
+            再依終場裝備的連續比例加權（輸出裝重輸出、坦裝重承傷、輔助裝重治療護盾）；權重低的工作做得多另有加分，清兵、推塔另有最多 6 分。
+            死亡、擊殺、金錢、勝負都不算分；全隊都做得多，全隊都可以高於 50。數字後面有「*」是暫估：這場沒有賽後統計，治療護盾隊友的量改用含自補的治療量。
+            小字「隊內」是你在隊裡扛的份量（占全隊的比例，和同類型的人排名），份額加起來一定是 100%，所以各隊平均都在 50 附近。橫條以 50 為中線。
+            6 分鐘內的重開局不計分。MVP＝贏的一隊本場貢獻最高、ACE＝輸的一隊本場貢獻最高；點一列看各項明細。
           </p>
         </TabsContent>
         <TabsContent value="stats">
@@ -619,7 +627,7 @@ function MatchCardChunk({
       {rows.map((m, j) => {
         const i = offset + j
         const role = roleOf.get(keyOf(m))
-        const { score = null, rank = null, tag } = contrib.get(keyOf(m)) ?? {}
+        const { score = null, rank = null, tag, estimate = false } = contrib.get(keyOf(m)) ?? {}
         const kda = m.deaths === 0 ? "Perfect" : ((m.kills + m.assists) / m.deaths).toFixed(2)
         const kp = m.team_kills ? Math.round(((m.kills + m.assists) / m.team_kills) * 100) : 0
         return (
@@ -645,7 +653,7 @@ function MatchCardChunk({
                 <span className="truncate font-semibold" title={m.riot_id ?? undefined}>{m.riot_id ?? "—"}</span>
                 {role && <RoleChip role={role} />}
                 <span className="shrink-0 text-muted-foreground">{m.champion_name}</span>
-                <span className="shrink-0 text-muted-foreground"><ContribInline score={score} rank={rank} /></span>
+                <span className="shrink-0 text-muted-foreground"><ContribInline score={score} rank={rank} estimate={estimate} /></span>
                 {headerExtra?.(m)}
                 <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">{fmtDate(m.game_creation)}</span>
               </div>
@@ -703,7 +711,7 @@ function MatchCardChunk({
                 // 固定寬度：晶片有寬有窄，加上貢獻分數後右欄不能跟著變寬，不然每列的敵我頭像會左右錯位
                 <div className="w-[118px] shrink-0 text-right">
                   <div className="flex items-center justify-end gap-1.5 text-xs text-muted-foreground">
-                    <ContribInline score={score} rank={rank} />
+                    <ContribInline score={score} rank={rank} estimate={estimate} />
                     {role && <RoleChip role={role} />}
                   </div>
                   <div className="whitespace-nowrap text-[11px] text-muted-foreground">{fmtDate(m.game_creation)}</div>

@@ -81,6 +81,11 @@ cubes:
         sql: "{CUBE}.rowid = {contribution}.participant_rowid"
         relationship: one_to_one
 
+      # 本場貢獻 v2（只和同一場的人比；不計分的場次也有一列，分數是空值），一對一
+      - name: contribution_v2
+        sql: "{CUBE}.rowid = {contribution_v2}.participant_rowid"
+        relationship: one_to_one
+
       - name: team_context
         sql: >
           {CUBE}.platform_id = {team_context}.platform_id

@@ -33,13 +33,16 @@ ARAM: Mayhem 的本機戰績採集與分析工具。FastAPI（`app.py`）+ Cube 
   規則寫在各 cube 的 `meta.materialize.sql`，`features.py` 在啟動時與每輪採集後照它重建。
   改這段 SQL **不會**被 Cube 的熱重載套用——要重啟服務或 `uv run features.py`。
   新的衍生表 cube 若要對全部參賽者跑視窗函數，也照這個做法，不要每個查詢現算（資料十倍時一個查詢十幾秒）。
-- **貢獻分數的規格與實測依據在 `docs/contribution-scoring.md`**：規則本體在 `contribution.yml` 的 `meta.materialize.sql`，兩邊一起改。
-  有兩個分數：`perf`（當局表現分，每分鐘實際數值和同類型 × 同時長帶的人比，全隊都打得好可以全隊都高；計分板、卡片、MVP／ACE 用）
-  與 `score`（隊內排名，占全隊的比例、同類型內名次，零和所以各隊平均都在 50；好友比較頁的運氣判斷用，不能換成 perf，因為 perf 和勝負相關）。
-  都用到 `dim_champion_roles`；前端門檻 `CONTRIB_GAP`／`PERF_GAP` 跟各自分數的標準差綁在一起。
+- **貢獻分數的規格與實測依據在 `docs/contribution-scoring.md`**：規則本體在各 cube 的 `meta.materialize.sql`，兩邊一起改。
+  畫面主分數是 **本場貢獻 v2**（`contribution_v2.yml` → `mat_contribution_v2`，欄位 `work_score_v2`）：只和同一場另外九個人比，
+  權重依終場裝備的連續比例，死亡不扣分；計分板大數字、對局卡片、MVP／ACE、好友比較頁用它。最後一步的換算常數（40.2／6.8）寫死，
+  **改任何常數或對照表都要升 `score_version` 並跑 `analysis/scoring_v2_check.py`（獨立 Python 逐筆比對）**。
+  舊的兩個分數保留：`perf`（當局表現分，和同類型 × 同時長帶的歷史人次比；英雄頁、好友比較頁的「打法」用）與
+  `score`（隊內排名，零和；計分板小字「隊內」用），都在 `contribution.yml`、用到 `dim_champion_roles`。
+  前端門檻 `WORK_GAP`／`PERF_GAP`／`CONTRIB_GAP` 與 `WORK_SD`／`PERF_SD` 跟各自分數的標準差綁在一起。
   不要把擊殺、金錢、勝負、KDA 比放回輸入（都是結果）。對局明細沒有護盾與治療隊友的量；賽後統計端點有，
-  採集器自動存進 `eog_snapshots` 並拆進 `eog_player_stats`，貢獻的「治療護盾」軸有這份資料就用它（只對開始擷取之後的場次有效，
-  舊場次退回含自補的治療量，護盾只做到不扣分）。
+  採集器自動存進 `eog_snapshots` 並拆進 `eog_player_stats`，「治療護盾」有這份資料（本場十人齊全）就用它，
+  沒有的場次退回含自補的治療量並標暫估（v2 的 `score_status = 'estimate'`）。
 - **`cube/model/views/` 是給 AI Agent 與外部工具的查詢入口**，前端不用、自由探索頁會濾掉。在 cube 加了對外有用的欄位，記得一併加進對應的 view，並補上 description。
 - **聚合走 Cube，逐列走 `/api/matches`；新的可下鑽維度一律用 `game_ids`**，不要再往 `/api/matches` 加篩選參數。
   作法：用和圖表同一組條件向 Cube 查 `<cube>.game_id`，再交給 `<DrillPanel query gameIdKey>`（`components/MatchList.tsx`）。
