@@ -49,7 +49,7 @@ import { BUILD_ROLES, BUILD_SHORT, NO_LIMIT, round0, splitRiotId } from "./share
 //   原本不用本場貢獻是因為它和勝負有關（個人相關 0.19），但五排的朋友共享輸贏，這個顧慮在這頁不成立。
 //   和 50 比，95% 區間（標準誤＝單場標準差 WORK_SD 18.5 ÷ √有分數的場數）整段高於 50 是「強勢」、整段低於 50 是「不強勢」；
 //   差 WORK_GAP（4）分以上但區間還跨過 50 是「偏強／偏弱」；不到 MIN_N 場寫「場次不夠」。
-//   畫面上的字換成比較好聽的說法（SHOWN）：拿手／順手／穩定／還在練／成長中；內部值（data-strength、e2e）和陣容頁共用，不動。
+//   畫面上的字換成比較好聽的說法（SHOWN）：拿手／順手／持平／還在練／待加強；內部值（data-strength、e2e）和陣容頁共用，不動。
 //   同一個人同時比好幾種出裝（或好幾隻英雄）時用 zFor(k) 放寬區間——一次比二十隻，總會有一兩隻只是運氣。
 // 勝率只當補充：和他自己的整體勝率比，區間（同樣放寬）整段在一邊才標 ▲▼，以及「非戰之罪」（表現好但勝率比他平常低 WR_LUCK 以上）、
 //   「隊友給力」（貢獻不強勢但勝率明顯高）。好友多半一起打、勝率互相牽動，2026-10 實測每個人的整體勝率都和 50% 分不出差別。
@@ -175,9 +175,10 @@ function extraOf(j: Judged) {
   return null
 }
 
-/** 畫面上的字：五級的內部值和陣容頁共用，好友比較換成比較好聽的說法（2026-10 好友的 PR 5）。
- *  場次夠、但本場貢獻和 50 差不多的是「穩定」（不是「看不出」——那會被讀成場次不夠） */
-const SHOWN: Record<Strength, string> = { 強勢: "拿手", 偏強: "順手", 看不出: "穩定", 偏弱: "還在練", 不強勢: "成長中" }
+/** 畫面上的字：五級的內部值和陣容頁共用，好友比較換成比較好聽的說法（2026-10 好友的 PR 5）。由強到弱：拿手、順手、持平、還在練、待加強——
+ *  「還在練」是還在誤差內的偏弱，「待加強」是看得出的弱，字面上也要讀得出誰比較弱。
+ *  場次夠、但本場貢獻和 50 差不多的是「持平」（不是「看不出」——那會被讀成場次不夠；也不用「穩定」——那會被讀成起伏小） */
+const SHOWN: Record<Strength, string> = { 強勢: "拿手", 偏強: "順手", 看不出: "持平", 偏弱: "還在練", 不強勢: "待加強" }
 const shownOf = (s: Strength) => SHOWN[s]
 
 const isPos = (s: Strength) => s === "強勢" || s === "偏強"
@@ -215,7 +216,7 @@ function tipOf(j: Judged, ownWr: number | null) {
 function StrengthChip({ j }: { j: Judged }) {
   const x = extraOf(j)
   const up = (j.wr?.diff ?? 0) > 0
-  // 不到 MIN_N 場沒有區間：和「場次夠、和 50 差不多」的穩定分開講
+  // 不到 MIN_N 場沒有區間：和「場次夠、和 50 差不多」的持平分開講
   if (!j.g?.interval && !x) return <span className="text-[11px] text-muted-foreground/80">場次不夠</span>
   return (
     <span className="inline-flex items-center gap-1 whitespace-nowrap">
@@ -418,7 +419,7 @@ function LuckTag({ j }: { j: Judged }) {
   return (
     <span
       data-testid="crew-luck"
-      className={cn("ml-1 rounded-sm px-1 text-[10px]", x === "非戰之罪" ? "bg-win/15 text-win" : "bg-loss/15 text-loss")}
+      className={cn("ml-1 rounded-sm px-1 text-[10px]", x === "非戰之罪" ? "bg-win/15 text-win" : "bg-muted text-muted-foreground")}
     >
       {x}
     </span>
@@ -447,7 +448,7 @@ function RowLegend() {
         <span className="rounded-sm bg-win/15 px-1 text-[10px] text-win">非戰之罪</span> 貢獻高但常輸（勝率低 {WR_LUCK}pp 以上）
       </span>
       <span>
-        <span className="rounded-sm bg-loss/15 px-1 text-[10px] text-loss">隊友給力</span> 貢獻還在追，但常贏
+        <span className="rounded-sm bg-muted px-1 text-[10px] text-muted-foreground">隊友給力</span> 貢獻還在追，但常贏
       </span>
     </div>
   )
@@ -504,7 +505,7 @@ function ChampBadge({ j, rank, ownWr, onClick }: { j: Judged; rank: number; ownW
           data-testid="crew-champ-luck"
           className={cn(
             "absolute -right-1 -top-1 z-10 rounded-sm px-0.5 text-[8px] leading-tight ring-1 ring-background",
-            extraOf(j) === "非戰之罪" ? "bg-win text-background" : "bg-loss text-background",
+            extraOf(j) === "非戰之罪" ? "bg-win text-background" : "bg-muted-foreground text-background",
           )}
         >
           {extraOf(j) === "非戰之罪" ? "非戰" : "給力"}
@@ -948,7 +949,7 @@ function readingOf(p: Profile) {
   return "本場貢獻和平均差不多（差距還在誤差內）。"
 }
 
-/** 總覽分頁的「看得出的強項／成長空間」：只列區間整段在一邊的，其餘只講有幾項 */
+/** 總覽分頁的「看得出的強項／進步空間」：只列區間整段在一邊的，其餘只講有幾項 */
 function Highlights({
   profile,
   onRole,
@@ -1001,7 +1002,7 @@ function Highlights({
   return (
     <div className="grid content-start gap-3">
       {block("看得出的強項", "強勢", "text-win")}
-      {block("看得出的成長空間", "不強勢", "text-loss")}
+      {block("看得出的進步空間", "不強勢", "text-loss")}
       <p className="text-[11px] text-muted-foreground">
         另有 {leanUp} 項順手、{leanDown} 項還在練，差距還在誤差內；「出裝與英雄」分頁看得到全部。
       </p>
@@ -1287,7 +1288,7 @@ function PlayerDrawerBody({
         {!(role && (!settled || champs.loading)) && (
           <div className="grid gap-2">
             <ChampStrip title="比平均強的英雄" tone="pos" items={sideOf(champJudged.items, "pos")} ownWr={ownWr} onPick={jumpToChamp} />
-            <ChampStrip title="還在練的英雄" tone="neg" items={sideOf(champJudged.items, "neg")} ownWr={ownWr} onPick={jumpToChamp} />
+            <ChampStrip title="還有進步空間的英雄" tone="neg" items={sideOf(champJudged.items, "neg")} ownWr={ownWr} onPick={jumpToChamp} />
           </div>
         )}
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -2357,14 +2358,14 @@ export function Crew() {
           {/* ── 全員一覽：每人一列，迷你雷達 + 出裝與英雄的判定 ── */}
           <Panel
             title="全員一覽"
-            caption="判定看本場貢獻（每場只和同一場的人比，50＝所有人的平均）的誤差範圍：整段高於 50 是拿手、整段低於 50 是成長中，還在誤差內的寫順手／還在練（虛線框）。雷達是各出裝佔他場次的比例。前面的數字是名次，看得出的排前面；滑過看數字，點一列開抽屜看完整分析"
+            caption="判定看本場貢獻（每場只和同一場的人比，50＝所有人的平均）的誤差範圍：整段高於 50 是拿手、整段低於 50 是待加強，還在誤差內的寫順手／還在練（虛線框）。雷達是各出裝佔他場次的比例。前面的數字是名次，看得出的排前面；滑過看數字，點一列開抽屜看完整分析"
           >
             {loading ? (
               <Skeleton className="h-[640px] w-full" />
             ) : (
               <div className="space-y-3">
                 <p className="text-sm" data-testid="crew-matrix-summary">
-                  各出裝裡 {counts.judged} 格有 {MIN_N} 場以上，看得出強弱的有 {counts.strong + counts.weak} 格（拿手 {counts.strong}、成長中 {counts.weak}），其餘差距都還在誤差內。
+                  各出裝裡 {counts.judged} 格有 {MIN_N} 場以上，看得出強弱的有 {counts.strong + counts.weak} 格（拿手 {counts.strong}、待加強 {counts.weak}），其餘差距都還在誤差內。
                 </p>
                 <RowLegend />
                 <div className="@container">
@@ -2374,11 +2375,11 @@ export function Crew() {
                       <span className="text-center">出裝定位</span>
                       <span className="grid grid-cols-2 gap-3">
                         <span className="text-win">出裝：比平均強</span>
-                        <span className="text-loss">出裝：待加強</span>
+                        <span className="text-loss">出裝：進步空間</span>
                       </span>
                       <span className="grid grid-cols-2 gap-3">
                         <span className="text-win">英雄：比平均強</span>
-                        <span className="text-loss">英雄：待加強</span>
+                        <span className="text-loss">英雄：進步空間</span>
                       </span>
                     </div>
                     <div
@@ -2466,8 +2467,8 @@ export function Crew() {
                     沒有賽後統計的場次（治療護盾隊友的量改用含自補的治療量）是暫估，也算進平均。
                   </p>
                   <p>
-                    每一項都算誤差範圍（95%；單場的分數起伏大，標準差約 18.5，場次越多範圍越窄）。範圍整段高於 50 才寫「拿手」、整段低於 50 才寫「成長中」；
-                    差 {WORK_GAP} 分以上但範圍還跨過 50 寫「順手／還在練」；其餘是「穩定」（和平均差不多）；不到 {MIN_N} 場寫「場次不夠」。同一個人同時比好幾種出裝或好幾隻英雄，範圍會再放寬——
+                    每一項都算誤差範圍（95%；單場的分數起伏大，標準差約 18.5，場次越多範圍越窄）。範圍整段高於 50 才寫「拿手」、整段低於 50 才寫「待加強」；
+                    差 {WORK_GAP} 分以上但範圍還跨過 50 寫「順手／還在練」；其餘是「持平」（和平均差不多）；不到 {MIN_N} 場寫「場次不夠」。同一個人同時比好幾種出裝或好幾隻英雄，範圍會再放寬——
                     一次比二十隻，總有一兩隻看起來特別好或特別差只是運氣。
                   </p>
                   <p>
