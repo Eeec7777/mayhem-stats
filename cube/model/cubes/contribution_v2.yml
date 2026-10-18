@@ -3,11 +3,12 @@ cubes:
   # 規格見 docs/contribution-scoring.md 的「本場貢獻 v2」；交接原文 docs/scoring-v2-handoff.md，差距分析 analysis/scoring-v2-gap-analysis-2026-10-17.md。
   # 舊的 perf／score（contribution.yml）保留不動，當回放對照。
   #
-  # 規則版本 v2.1（2026-10-17）。改下面任何一個常數、對照表或公式，都要把 score_version 往上升，並重跑回放
+  # 規則版本 v2.2（2026-10-18）。改下面任何一個常數、對照表或公式，都要把 score_version 往上升，並重跑回放
   # （analysis/scoring_v2_check.py 獨立重算比對；第 7 步的係數用 analysis/scoring_v2_fit.py 重新擬合）。
   #   v2.0 → v2.1：模板改成輸出（D .9, C .1）、承傷（T .7, C .3）、保人（T .2, C .2, H .6），並加上第 7 步的裝備組成校正。
   #   原因：v2.0 各出裝平均差 12 分（射手 42.6、輔助 42.0、鬥士 54.4），射手、刺客的控場項只有 27／34 分卻固定占 20% 權重；
   #   改完差 3 分以內（使用者 2026-10-17 要求調整）。
+  #   v2.1 → v2.2：加上第 8 步的射手加分（使用者 2026-10-18 要求「單獨加強射手，但不要太誇張」）。只動射手英雄，其他人的分數不變。
   #
   # 1. 計分範圍：queue 2400、非重開、≥ 360 秒、雙方各 5 人。其他場次留一列但分數是空值，unscored_reason 寫原因。
   # 2. 工作量（每分鐘，本場十人時長相同）：D 對英雄傷害、T 承受＋自身減免、C time_ccing_others（cc_duration 不加，避免重複）、
@@ -35,7 +36,12 @@ cubes:
   #      β 是 v2.1 定版時（2026-10-17，709 場）對原始分的最小平方擬合（analysis/scoring_v2_fit.py）。
   #    work_score_v2 = 50 + 20 × (raw − expected) ÷ SD，SD＝定版時殘差的標準差，夾在 0～100。
   #    β 與 SD **寫死成常數**：之後新增對局不會改舊分。所以 50 是「定版當時、同樣裝備組成的人的平均」，不是同英雄的中位數；
-  #    比的仍然是同一場的工作量，校正只依這場自己的裝備，不看英雄、玩家或歷史表現。
+  #    比的仍然是同一場的工作量，校正只依這場自己的裝備，不看英雄、玩家或歷史表現（第 8 步的射手加分是唯一例外）。
+  # 8. 射手加分（v2.2）：官方定位有射手（dim_champion_roles 的 marksman，和 builds.yml 判斷射手同一個來源）的英雄，
+  #    原始分再加 0.85 × 這場 AD 裝比例（f_ad），顯示分數最多 +2.5、平均 +1.8；出 AP 或坦裝的射手英雄只加一點點。
+  #    為什麼：v2.1 射手平均 47.8，主要是控場少（每分鐘 0.89 秒，AD 刺客 1.38）、站後排扛得少，而校正只看 AD／AP 比例，
+  #    分不出同樣出 AD 輸出裝的射手與刺客、鬥士。0.85 是讓射手出裝的平均剛好回到 50 的值：補到平均為止，不額外送分。
+  #    不用暴擊裝判斷射手（使用者決定）。這一項依英雄的官方定位，是整套規則裡唯一看英雄的地方。
   #
   # 限制（畫面與說明要講清楚）：這是本場相對工作量，不是操作實力；同樣的數值在不同陣容下會不同分；承傷量分不出有效開戰與無效吃傷；
   # 跨場平均只能當描述。
@@ -88,7 +94,8 @@ cubes:
               CASE WHEN mp.units_healed >= 2 THEN mp.total_heal * 60.0 / m.game_duration
                    WHEN mp.units_healed IS NOT NULL THEN 0.0 END AS h_flag,
               COALESCE(p.pts_d, 0) AS pts_d, COALESCE(p.pts_t, 0) AS pts_t, COALESCE(p.pts_h, 0) AS pts_h, COALESCE(p.pts_ad, 0) AS pts_ad,
-              COALESCE(p.anti_heal_item, 0) AS anti_heal_item, COALESCE(p.anti_shield_item, 0) AS anti_shield_item
+              COALESCE(p.anti_heal_item, 0) AS anti_heal_item, COALESCE(p.anti_shield_item, 0) AS anti_shield_item,
+              EXISTS (SELECT 1 FROM dim_champion_roles cr WHERE cr.champion_id = mp.champion_id AND cr.role = 'marksman') AS is_marksman
             FROM match_participants mp
             JOIN matches m ON m.platform_id = mp.platform_id AND m.game_id = mp.game_id
             LEFT JOIN item_pts p ON p.platform_id = mp.platform_id AND p.game_id = mp.game_id AND p.participant_id = mp.participant_id
@@ -162,15 +169,17 @@ cubes:
           final AS (
             SELECT *, base_score + cross_role_bonus + COALESCE(wave_bonus, 0) + COALESCE(objective_bonus, 0) AS work_raw,
               -- 第 7 步：這種裝備組成的平均原始分（係數寫死，見檔頭）
-              39.434 * f_ad + 39.811 * f_ap + 39.228 * r_t + 37.535 * r_h + 12.399 * f_ad * r_t + 9.217 * f_ap * r_t AS mix_expected
+              39.434 * f_ad + 39.811 * f_ap + 39.228 * r_t + 37.535 * r_h + 12.399 * f_ad * r_t + 9.217 * f_ap * r_t AS mix_expected,
+              -- 第 8 步：射手加分（只動射手英雄，見檔頭）
+              CASE WHEN is_marksman THEN 0.85 * f_ad ELSE 0.0 END AS marksman_bonus
             FROM scored
           )
-          SELECT g.participant_rowid, 'v2.1' AS score_version,
+          SELECT g.participant_rowid, 'v2.2' AS score_version,
             CASE WHEN g.unscored_reason IS NOT NULL THEN 'unscored'
                  WHEN f.heal_src = 'eog' AND NOT f.role_unknown AND f.w_ok AND f.o_ok THEN 'complete' ELSE 'estimate' END AS score_status,
             g.unscored_reason,
-            ROUND(MIN(100.0, MAX(0.0, 50.0 + 20.0 * (f.work_raw - f.mix_expected) / 6.706)), 9) AS work_score_v2,
-            ROUND(f.work_raw, 9) AS work_raw, ROUND(f.mix_expected, 9) AS mix_expected, ROUND(f.base_score, 9) AS base_score, ROUND(f.cross_role_bonus, 9) AS cross_role_bonus,
+            ROUND(MIN(100.0, MAX(0.0, 50.0 + 20.0 * (f.work_raw + f.marksman_bonus - f.mix_expected) / 6.706)), 9) AS work_score_v2,
+            ROUND(f.work_raw, 9) AS work_raw, ROUND(f.mix_expected, 9) AS mix_expected, ROUND(f.marksman_bonus, 9) AS marksman_bonus, g.is_marksman, ROUND(f.base_score, 9) AS base_score, ROUND(f.cross_role_bonus, 9) AS cross_role_bonus,
             ROUND(f.wave_bonus, 9) AS wave_bonus, ROUND(f.objective_bonus, 9) AS objective_bonus,
             0.0 AS anti_heal_bonus, 0.0 AS anti_shield_bonus, g.anti_heal_item, g.anti_shield_item,
             f.x_d, f.x_t, f.x_c, f.x_h, f.x_w, f.x_o, g.w_raw < 0 AS w_anomaly,
@@ -206,7 +215,7 @@ cubes:
 
       - name: score_version
         title: v2 規則版本
-        description: "本場貢獻 v2 的規則版本（例如 v2.1）。跨場比較或聚合時要同版本。"
+        description: "本場貢獻 v2 的規則版本（例如 v2.2）。跨場比較或聚合時要同版本。"
         sql: score_version
         type: string
         meta:
@@ -215,7 +224,7 @@ cubes:
     measures:
       - name: work
         title: 本場貢獻
-        description: "本場貢獻 v2（0～100）：這場可觀測的工作量（對英雄傷害、承傷、控場、治療護盾隊友，加上有上限的清兵、推塔加分），只和同一場另外九個人比；各項權重依終場裝備的連續比例（輸出／承傷／保人）決定，不用英雄名稱或歷史平均。最後扣掉「同樣裝備組成的平均」（係數在 v2.1 定版時寫死），所以 50＝同樣裝備組成的人的平均，射手、坦克、輔助的平均都接近 50；不是同英雄中位數。死亡不扣分；擊殺、金錢、勝負不是輸入。沒有賽後統計的場次是暫估（score_status）。跨場平均只是描述，不代表操作實力。"
+        description: "本場貢獻 v2（0～100）：這場可觀測的工作量（對英雄傷害、承傷、控場、治療護盾隊友，加上有上限的清兵、推塔加分），只和同一場另外九個人比；各項權重依終場裝備的連續比例（輸出／承傷／保人）決定，不用英雄名稱或歷史平均。最後扣掉「同樣裝備組成的平均」（係數在 v2.1 定版時寫死），所以 50＝同樣裝備組成的人的平均，射手、坦克、輔助的平均都接近 50；不是同英雄中位數。射手英雄依 AD 裝比例另加最多約 2.5 分（補控場少、站後排的結構性落差）。死亡不扣分；擊殺、金錢、勝負不是輸入。沒有賽後統計的場次是暫估（score_status）。跨場平均只是描述，不代表操作實力。"
         sql: work_score_v2
         type: avg
         meta:

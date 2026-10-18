@@ -35,7 +35,7 @@ ARAM: Mayhem 的本機戰績採集與分析工具。FastAPI（`app.py`）+ Cube 
   新的衍生表 cube 若要對全部參賽者跑視窗函數，也照這個做法，不要每個查詢現算（資料十倍時一個查詢十幾秒）。
 - **貢獻分數的規格與實測依據在 `docs/contribution-scoring.md`**：規則本體在各 cube 的 `meta.materialize.sql`，兩邊一起改。
   畫面主分數是 **本場貢獻 v2**（`contribution_v2.yml` → `mat_contribution_v2`，欄位 `work_score_v2`）：只和同一場另外九個人比，
-  權重依終場裝備的連續比例，死亡不扣分；計分板大數字、對局卡片、MVP／ACE、好友比較頁用它。最後一步扣掉「同樣裝備組成的平均」，係數（β、SD）寫死，
+  權重依終場裝備的連續比例，死亡不扣分；計分板大數字、對局卡片、MVP／ACE、好友比較頁用它。最後一步扣掉「同樣裝備組成的平均」、射手英雄另加 0.85 × AD 裝比例（v2.2），係數寫死，
   **改任何常數或對照表都要升 `score_version` 並跑 `analysis/scoring_v2_check.py`（獨立 Python 逐筆比對）**。
   舊的兩個分數保留：`perf`（當局表現分，和同類型 × 同時長帶的歷史人次比；英雄頁、好友比較頁的「打法」用）與
   `score`（隊內排名，零和；計分板小字「隊內」用），都在 `contribution.yml`、用到 `dim_champion_roles`。

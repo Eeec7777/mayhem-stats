@@ -20,7 +20,7 @@ sql = yaml.safe_load(YML.read_text(encoding="utf-8"))["cubes"][0]["meta"]["mater
 # 係數那一行換成 0，SD 換成 1（不管現在寫的是佔位符還是數字）
 sql = re.sub(r"(?m)^(\s*)\S+ \* f_ad \+ \S+ \* f_ap \+ \S+ \* r_t \+ \S+ \* r_h \+ \S+ \* f_ad \* r_t \+ \S+ \* f_ap \* r_t AS mix_expected",
              r"\g<1>0 AS mix_expected", sql)
-sql = re.sub(r"\(f\.work_raw - f\.mix_expected\) / [^)]+\)", "(f.work_raw - f.mix_expected) / 1.0)", sql)
+sql = re.sub(r"\(f\.work_raw \+ f\.marksman_bonus - f\.mix_expected\) / [^)]+\)", "(f.work_raw + f.marksman_bonus - f.mix_expected) / 1.0)", sql)
 
 c = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
 rows = c.execute(f"""SELECT t.work_raw, t.f_ad, t.f_ap, t.r_t, t.r_h, b.build_role FROM ({sql}) t

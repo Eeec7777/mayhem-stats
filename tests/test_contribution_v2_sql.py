@@ -135,7 +135,7 @@ class V2Tests(unittest.TestCase):
         self.assertLessEqual(r["wave_bonus"], 2)
         self.assertLessEqual(r["objective_bonus"], 4)
         self.assertLessEqual(r["cross_role_bonus"], 10)
-        self.assertEqual(r["score_version"], "v2.1")
+        self.assertEqual(r["score_version"], "v2.2")
 
     def test_build_mix_calibration_depends_only_on_own_items(self):
         # 裝備組成校正只看自己的裝備比例：同一場、同樣的數字，換成承傷裝，期望分（mix_expected）跟著換、工作量的分項不變
@@ -145,7 +145,20 @@ class V2Tests(unittest.TestCase):
         a, b = self.at(res, 1, 3), self.at(res, 2, 3)
         self.assertAlmostEqual(a["mix_expected"], 39.434 * (6000 / 6000) * 0.5 + 39.811 * 0.5)  # 一件 AD、一件 AP
         self.assertAlmostEqual(b["mix_expected"], 39.228)  # 全是承傷裝
-        self.assertAlmostEqual(a["work_score_v2"], max(0, min(100, 50 + 20 * (a["work_raw"] - a["mix_expected"]) / 6.706)), places=6)
+        self.assertAlmostEqual(a["work_score_v2"], max(0, min(100, 50 + 20 * (a["work_raw"] + a["marksman_bonus"] - a["mix_expected"]) / 6.706)), places=6)
+
+    def test_marksman_bonus_only_moves_marksman_champions(self):
+        # 英雄 1 在第二場改成官方定位有射手：只有他的分數變高（加 0.85 × AD 裝比例），同場其他人完全不變
+        self.fx.game(1)
+        before = self.fx.result()
+        self.fx.conn.execute("INSERT INTO dim_champion_roles (champion_id, role) VALUES (1, 'marksman')")
+        self.fx.conn.commit()
+        after = self.fx.result()
+        r0, r1 = self.at(before, 1, 3), self.at(after, 1, 3)
+        self.assertEqual(r0["marksman_bonus"], 0)
+        self.assertAlmostEqual(r1["marksman_bonus"], 0.85 * r1["f_ad"])
+        self.assertAlmostEqual(r1["work_score_v2"] - r0["work_score_v2"], 20 * 0.85 * r1["f_ad"] / 6.706, places=6)
+        self.assertLessEqual(r1["work_score_v2"] - r0["work_score_v2"], 2.6)
 
 
 if __name__ == "__main__":

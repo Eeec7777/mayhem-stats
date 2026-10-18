@@ -22,6 +22,8 @@ EPS, K_EOG, K_FLAG = 0.05, 1250.0, 1100.0
 TPL = ((0.9, 0, 0.1, 0), (0, 0.7, 0.3, 0), (0, 0.2, 0.2, 0.6))
 BETA = (39.434, 39.811, 39.228, 37.535, 12.399, 9.217)  # AD, AP, 承傷, 保人, AD×承傷, AP×承傷
 SD0 = 6.706
+MK = 0.85  # v2.2 射手加分：官方定位有射手的英雄，原始分加 MK × AD 裝比例
+marksman = {r[0] for r in c.execute("SELECT champion_id FROM dim_champion_roles WHERE role = 'marksman'")}
 
 cats = collections.defaultdict(set)
 for r in c.execute("SELECT item_id, category FROM dim_item_categories"):
@@ -64,6 +66,7 @@ for key, ps in games.items():
         fad, fap = (1 / 6, 1 / 6) if tot == 0 else (pad / tot, (pd - pad) / tot)
         w = tuple(sum(r[j] * TPL[j][k] for j in range(3)) for k in range(4))
         expected = sum(b * x for b, x in zip(BETA, (fad, fap, r[1], r[2], fad * r[1], fap * r[1])))
+        expected -= MK * fad if p["champion_id"] in marksman else 0  # 射手加分等於把期望分往下移
         h = eog[(key[1], p["puuid"])] / mins if use_eog else (p["total_heal"] / mins if p["units_healed"] >= 2 else 0.0)
         rows.append(dict(rid=p["rid"], w=w, x=(p["dmg_to_champions"] / mins, (p["dmg_taken"] + p["dmg_mitigated"]) / mins, p["time_ccing_others"] / mins),
                          h=h, wv=max(0, p["total_damage"] - p["dmg_to_champions"] - p["dmg_to_objectives"]) / mins, o=p["dmg_to_objectives"] / mins,
